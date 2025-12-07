@@ -48,6 +48,7 @@ pub fn Nes6502(
 
         var op_table: [256]Operation = [_]Operation{.{ op_adc, @"absolute mode", 4 }} ** 256;
         pub fn init() void {
+            // ADC - Add with Carry
             op_table[0x69] = Operation{ op_adc, @"#immediate mode", 2 };
             op_table[0x65] = Operation{ op_adc, @"zero page mode", 3 };
             op_table[0x75] = Operation{ op_adc, @"zero page,x mode", 4 };
@@ -55,8 +56,9 @@ pub fn Nes6502(
             op_table[0x7d] = Operation{ op_adc, @"absolute,x mode", 4 };
             op_table[0x79] = Operation{ op_adc, @"absolute,y mode", 4 };
             op_table[0x61] = Operation{ op_adc, @"(indirect,x) mode", 6 };
-            op_table[0x71] = Operation{ op_adc, @"(indirect),y mode", 6 };
+            op_table[0x71] = Operation{ op_adc, @"(indirect),y mode", 5 };
 
+            // AND - Logical AND
             op_table[0x29] = Operation{ op_and, @"#immediate mode", 2 };
             op_table[0x25] = Operation{ op_and, @"zero page mode", 3 };
             op_table[0x35] = Operation{ op_and, @"zero page,x mode", 4 };
@@ -66,31 +68,57 @@ pub fn Nes6502(
             op_table[0x21] = Operation{ op_and, @"(indirect,x) mode", 6 };
             op_table[0x31] = Operation{ op_and, @"(indirect),y mode", 5 };
 
-            op_table[0x0a] = Operation{ op_asl, accumulator, 2 };
+            // ASL - Arithmetic Shift Left
+            op_table[0x0a] = Operation{ op_asl, @"accumulator mode", 2 };
             op_table[0x06] = Operation{ op_asl, @"zero page mode", 5 };
             op_table[0x16] = Operation{ op_asl, @"zero page,x mode", 6 };
             op_table[0x0e] = Operation{ op_asl, @"absolute mode", 6 };
             op_table[0x1e] = Operation{ op_asl, @"absolute,x mode", 7 };
 
+            // BCC - Branch if Carry Clear
             op_table[0x90] = Operation{ op_bcc, null, 0 };
-            op_table[0xb0] = Operation{ op_bcs, null, 0 };
-            op_table[0xf0] = Operation{ op_beq, null, 0 };
-            op_table[0x30] = Operation{ op_bmi, null, 0 };
-            op_table[0xd0] = Operation{ op_bne, null, 0 };
-            op_table[0x10] = Operation{ op_bpl, null, 0 };
-            op_table[0x50] = Operation{ op_bvc, null, 0 };
-            op_table[0x70] = Operation{ op_bvs, null, 0 };
 
+            // BCS - Branch if Carry Set
+            op_table[0xb0] = Operation{ op_bcs, null, 0 };
+
+            // BEQ - Branch if Equal (Zero Set)
+            op_table[0xf0] = Operation{ op_beq, null, 0 };
+
+            // BIT - Bit Test
             op_table[0x24] = Operation{ op_bit, @"zero page mode", 3 };
             op_table[0x2c] = Operation{ op_bit, @"absolute mode", 4 };
 
+            // BMI - Branch if Minus
+            op_table[0x30] = Operation{ op_bmi, null, 0 };
+
+            // BNE - Branch if Not Equal
+            op_table[0xd0] = Operation{ op_bne, null, 0 };
+
+            // BPL - Branch if Plus
+            op_table[0x10] = Operation{ op_bpl, null, 0 };
+
+            // BRK - Break
             op_table[0x00] = Operation{ op_brk, null, 7 };
 
+            // BVC - Branch if Overflow Clear
+            op_table[0x50] = Operation{ op_bvc, null, 0 };
+
+            // BVS - Branch if Overflow Set
+            op_table[0x70] = Operation{ op_bvs, null, 0 };
+
+            // CLC - Clear Carry Flag
             op_table[0x18] = Operation{ op_clc, null, 2 };
+
+            // CLD - Clear Decimal Mode
             op_table[0xd8] = Operation{ op_cld, null, 2 };
+
+            // CLI - Clear Interrupt Disable
             op_table[0x58] = Operation{ op_cli, null, 2 };
+
+            // CLV - Clear Overflow Flag
             op_table[0xb8] = Operation{ op_clv, null, 2 };
 
+            // CMP - Compare Accumulator
             op_table[0xc9] = Operation{ op_cmp, @"#immediate mode", 2 };
             op_table[0xc5] = Operation{ op_cmp, @"zero page mode", 3 };
             op_table[0xd5] = Operation{ op_cmp, @"zero page,x mode", 4 };
@@ -100,29 +128,29 @@ pub fn Nes6502(
             op_table[0xc1] = Operation{ op_cmp, @"(indirect,x) mode", 6 };
             op_table[0xd1] = Operation{ op_cmp, @"(indirect),y mode", 5 };
 
+            // CPX - Compare X Register
             op_table[0xe0] = Operation{ op_cpx, @"#immediate mode", 2 };
             op_table[0xe4] = Operation{ op_cpx, @"zero page mode", 3 };
             op_table[0xec] = Operation{ op_cpx, @"absolute mode", 4 };
 
+            // CPY - Compare Y Register
             op_table[0xc0] = Operation{ op_cpy, @"#immediate mode", 2 };
             op_table[0xc4] = Operation{ op_cpy, @"zero page mode", 3 };
             op_table[0xcc] = Operation{ op_cpy, @"absolute mode", 4 };
 
+            // DEC - Decrement Memory
             op_table[0xc6] = Operation{ op_dec, @"zero page mode", 5 };
             op_table[0xd6] = Operation{ op_dec, @"zero page,x mode", 6 };
             op_table[0xce] = Operation{ op_dec, @"absolute mode", 6 };
             op_table[0xde] = Operation{ op_dec, @"absolute,x mode", 7 };
 
-            op_table[0xe6] = Operation{ op_inc, @"zero page mode", 5 };
-            op_table[0xf6] = Operation{ op_inc, @"zero page,x mode", 6 };
-            op_table[0xee] = Operation{ op_inc, @"absolute mode", 6 };
-            op_table[0xfe] = Operation{ op_inc, @"absolute,x mode", 7 };
-
+            // DEX - Decrement X Register
             op_table[0xca] = Operation{ op_dex, null, 2 };
-            op_table[0x88] = Operation{ op_dey, null, 2 };
-            op_table[0xe8] = Operation{ op_inx, null, 2 };
-            op_table[0xc8] = Operation{ op_iny, null, 2 };
 
+            // DEY - Decrement Y Register
+            op_table[0x88] = Operation{ op_dey, null, 2 };
+
+            // EOR - Exclusive OR
             op_table[0x49] = Operation{ op_eor, @"#immediate mode", 2 };
             op_table[0x45] = Operation{ op_eor, @"zero page mode", 3 };
             op_table[0x55] = Operation{ op_eor, @"zero page,x mode", 4 };
@@ -132,20 +160,26 @@ pub fn Nes6502(
             op_table[0x41] = Operation{ op_eor, @"(indirect,x) mode", 6 };
             op_table[0x51] = Operation{ op_eor, @"(indirect),y mode", 5 };
 
-            op_table[0x09] = Operation{ op_ora, @"#immediate mode", 2 };
-            op_table[0x05] = Operation{ op_ora, @"zero page mode", 3 };
-            op_table[0x15] = Operation{ op_ora, @"zero page,x mode", 4 };
-            op_table[0x0d] = Operation{ op_ora, @"absolute mode", 4 };
-            op_table[0x1d] = Operation{ op_ora, @"absolute,x mode", 4 };
-            op_table[0x19] = Operation{ op_ora, @"absolute,y mode", 4 };
-            op_table[0x01] = Operation{ op_ora, @"(indirect,x) mode", 6 };
-            op_table[0x11] = Operation{ op_ora, @"(indirect),y mode", 5 };
+            // INC - Increment Memory
+            op_table[0xe6] = Operation{ op_inc, @"zero page mode", 5 };
+            op_table[0xf6] = Operation{ op_inc, @"zero page,x mode", 6 };
+            op_table[0xee] = Operation{ op_inc, @"absolute mode", 6 };
+            op_table[0xfe] = Operation{ op_inc, @"absolute,x mode", 7 };
 
+            // INX - Increment X Register
+            op_table[0xe8] = Operation{ op_inx, null, 2 };
+
+            // INY - Increment Y Register
+            op_table[0xc8] = Operation{ op_iny, null, 2 };
+
+            // JMP - Jump
             op_table[0x4c] = Operation{ op_jmp, null, 3 };
             op_table[0x6c] = Operation{ op_jmp_indirect, null, 5 };
 
-            op_table[0x20] = Operation{ op_jsr, null, 6 };
+            // JSR - Jump to Subroutine
+            op_table[0x20] = Operation{ op_jsr, @"absolute mode", 6 };
 
+            // LDA - Load Accumulator
             op_table[0xa9] = Operation{ op_lda, @"#immediate mode", 2 };
             op_table[0xa5] = Operation{ op_lda, @"zero page mode", 3 };
             op_table[0xb5] = Operation{ op_lda, @"zero page,x mode", 4 };
@@ -155,25 +189,127 @@ pub fn Nes6502(
             op_table[0xa1] = Operation{ op_lda, @"(indirect,x) mode", 6 };
             op_table[0xb1] = Operation{ op_lda, @"(indirect),y mode", 5 };
 
+            // LDX - Load X Register
             op_table[0xa2] = Operation{ op_ldx, @"#immediate mode", 2 };
             op_table[0xa6] = Operation{ op_ldx, @"zero page mode", 3 };
             op_table[0xb6] = Operation{ op_ldx, @"zero page,y mode", 4 };
             op_table[0xae] = Operation{ op_ldx, @"absolute mode", 4 };
             op_table[0xbe] = Operation{ op_ldx, @"absolute,y mode", 4 };
 
+            // LDY - Load Y Register
             op_table[0xa0] = Operation{ op_ldy, @"#immediate mode", 2 };
             op_table[0xa4] = Operation{ op_ldy, @"zero page mode", 3 };
             op_table[0xb4] = Operation{ op_ldy, @"zero page,x mode", 4 };
             op_table[0xac] = Operation{ op_ldy, @"absolute mode", 4 };
             op_table[0xbc] = Operation{ op_ldy, @"absolute,x mode", 4 };
 
-            op_table[0x4a] = Operation{ op_lsr, accumulator, 2 };
+            // LSR - Logical Shift Right
+            op_table[0x4a] = Operation{ op_lsr, @"accumulator mode", 2 };
             op_table[0x46] = Operation{ op_lsr, @"zero page mode", 5 };
             op_table[0x56] = Operation{ op_lsr, @"zero page,x mode", 6 };
             op_table[0x4e] = Operation{ op_lsr, @"absolute mode", 6 };
             op_table[0x5e] = Operation{ op_lsr, @"absolute,x mode", 7 };
 
+            // NOP - No Operation
             op_table[0xea] = nop;
+
+            // ORA - Logical Inclusive OR
+            op_table[0x09] = Operation{ op_ora, @"#immediate mode", 2 };
+            op_table[0x05] = Operation{ op_ora, @"zero page mode", 3 };
+            op_table[0x15] = Operation{ op_ora, @"zero page,x mode", 4 };
+            op_table[0x0d] = Operation{ op_ora, @"absolute mode", 4 };
+            op_table[0x1d] = Operation{ op_ora, @"absolute,x mode", 4 };
+            op_table[0x19] = Operation{ op_ora, @"absolute,y mode", 4 };
+            op_table[0x01] = Operation{ op_ora, @"(indirect,x) mode", 6 };
+            op_table[0x11] = Operation{ op_ora, @"(indirect),y mode", 5 };
+
+            // PHA - Push Accumulator
+            op_table[0x48] = Operation{ op_pha, null, 3 };
+
+            // PHP - Push Processor Status
+            op_table[0x08] = Operation{ op_php, null, 3 };
+
+            // PLA - Pull Accumulator
+            op_table[0x68] = Operation{ op_pla, null, 4 };
+
+            // PLP - Pull Processor Status
+            op_table[0x28] = Operation{ op_plp, null, 4 };
+
+            // ROL - Rotate Left
+            op_table[0x2a] = Operation{ op_rol, @"accumulator mode", 2 };
+            op_table[0x26] = Operation{ op_rol, @"zero page mode", 5 };
+            op_table[0x36] = Operation{ op_rol, @"zero page,x mode", 6 };
+            op_table[0x2e] = Operation{ op_rol, @"absolute mode", 6 };
+            op_table[0x3e] = Operation{ op_rol, @"absolute,x mode", 7 };
+
+            // ROR - Rotate Right
+            op_table[0x6a] = Operation{ op_ror, @"accumulator mode", 2 };
+            op_table[0x66] = Operation{ op_ror, @"zero page mode", 5 };
+            op_table[0x76] = Operation{ op_ror, @"zero page,x mode", 6 };
+            op_table[0x6e] = Operation{ op_ror, @"absolute mode", 6 };
+            op_table[0x7e] = Operation{ op_ror, @"absolute,x mode", 7 };
+
+            // RTI - Return from Interrupt
+            op_table[0x40] = Operation{ op_rti, null, 6 };
+
+            // RTS - Return from Subroutine
+            op_table[0x60] = Operation{ op_rts, null, 6 };
+
+            // SBC - Subtract with Carry
+            op_table[0xe9] = Operation{ op_sbc, @"#immediate mode", 2 };
+            op_table[0xe5] = Operation{ op_sbc, @"zero page mode", 3 };
+            op_table[0xf5] = Operation{ op_sbc, @"zero page,x mode", 4 };
+            op_table[0xed] = Operation{ op_sbc, @"absolute mode", 4 };
+            op_table[0xfd] = Operation{ op_sbc, @"absolute,x mode", 4 };
+            op_table[0xf9] = Operation{ op_sbc, @"absolute,y mode", 4 };
+            op_table[0xe1] = Operation{ op_sbc, @"(indirect,x) mode", 6 };
+            op_table[0xf1] = Operation{ op_sbc, @"(indirect),y mode", 5 };
+
+            // SEC - Set Carry Flag
+            op_table[0x38] = Operation{ op_sec, null, 2 };
+
+            // SED - Set Decimal Flag
+            op_table[0xf8] = Operation{ op_sed, null, 2 };
+
+            // SEI - Set Interrupt Disable
+            op_table[0x78] = Operation{ op_sei, null, 2 };
+
+            // STA - Store Accumulator
+            op_table[0x85] = Operation{ op_sta, @"zero page mode", 3 };
+            op_table[0x95] = Operation{ op_sta, @"zero page,x mode", 4 };
+            op_table[0x8d] = Operation{ op_sta, @"absolute mode", 4 };
+            op_table[0x9d] = Operation{ op_sta, @"absolute,x mode", 5 };
+            op_table[0x99] = Operation{ op_sta, @"absolute,y mode", 5 };
+            op_table[0x81] = Operation{ op_sta, @"(indirect,x) mode", 6 };
+            op_table[0x91] = Operation{ op_sta, @"(indirect),y mode", 6 };
+
+            // STX - Store X Register
+            op_table[0x86] = Operation{ op_stx, @"zero page mode", 3 };
+            op_table[0x96] = Operation{ op_stx, @"zero page,y mode", 4 };
+            op_table[0x8e] = Operation{ op_stx, @"absolute mode", 4 };
+
+            // STY - Store Y Register
+            op_table[0x84] = Operation{ op_sty, @"zero page mode", 3 };
+            op_table[0x94] = Operation{ op_sty, @"zero page,x mode", 4 };
+            op_table[0x8c] = Operation{ op_sty, @"absolute mode", 4 };
+
+            // TAX - Transfer Accumulator to X
+            op_table[0xaa] = Operation{ op_tax, null, 2 };
+
+            // TAY - Transfer Accumulator to Y
+            op_table[0xa8] = Operation{ op_tay, null, 2 };
+
+            // TSX - Transfer Stack Pointer to X
+            op_table[0xba] = Operation{ op_tsx, null, 2 };
+
+            // TXA - Transfer X to Accumulator
+            op_table[0x8a] = Operation{ op_txa, null, 2 };
+
+            // TXS - Transfer X to Stack Pointer
+            op_table[0x9a] = Operation{ op_txs, null, 2 };
+
+            // TYA - Transfer Y to Accumulator
+            op_table[0x98] = Operation{ op_tya, null, 2 };
         }
 
         inline fn read_next_u8(self: *Self) u8 {
@@ -327,11 +463,11 @@ pub fn Nes6502(
         }
 
         fn op_cmp(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            self.status.carry = @bitCast(self.a >= operand);
-            self.status.zero = @bitCast(self.a == operand);
-            self.status.negative = @bitCast((self.a -% operand) & 0x80 != 0);
-            return cycles(op_table[op_code]);
+            const operand = self.fetch_operand(op_table[op_code]);
+            self.status.carry = @bitCast(self.a >= operand.value);
+            self.status.zero = @bitCast(self.a == operand.value);
+            self.status.negative = @bitCast((self.a -% operand.value) & 0x80 != 0);
+            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
         }
 
         fn op_cpx(self: *Self, op_code: u8) u8 {
@@ -403,19 +539,19 @@ pub fn Nes6502(
         }
 
         fn op_eor(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            self.a = self.a ^ operand;
+            const operand = self.fetch_operand(op_table[op_code]);
+            self.a = self.a ^ operand.value;
             self.status.zero = @bitCast(self.a == 0);
             self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]);
+            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
         }
 
         fn op_ora(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            self.a = self.a | operand;
+            const operand = self.fetch_operand(op_table[op_code]);
+            self.a = self.a | operand.value;
             self.status.zero = @bitCast(self.a == 0);
             self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]);
+            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
         }
 
         fn op_jmp(self: *Self, op_code: u8) u8 {
@@ -493,6 +629,74 @@ pub fn Nes6502(
             return cycles(op_table[op_code]);
         }
 
+        fn op_pha(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.push_u8(self.a);
+            return cycles(op_table[op_code]);
+        }
+        fn op_php(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
+            return cycles(op_table[op_code]);
+        }
+        fn op_pla(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_plp(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_rol(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_ror(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_rti(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_rts(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sbc(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sec(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sed(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sei(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sta(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_stx(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_sty(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_tax(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_tay(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_tsx(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_txa(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_txs(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+        fn op_tya(_: *Self, op_code: u8) u8 {
+            return cycles(op_table[op_code]);
+        }
+
         inline fn push_u8(self: *Self, value: u8) void {
             write_u8(0x0100 +% @as(u16, self.s), value);
             self.s -%= 1;
@@ -514,7 +718,7 @@ pub fn Nes6502(
         inline fn execute(self: *Self, op: Operation, op_code: u8) u8 {
             return op.@"0"(self, op_code);
         }
-        fn accumulator(self: *Self) Operand {
+        fn @"accumulator mode"(self: *Self) Operand {
             _ = read_u8(self.pc);
             return .{ .value = self.a };
         }
@@ -590,6 +794,9 @@ pub fn Nes6502(
 /// Tests
 ////////////////////////////////////////////////////////////////////////////////
 const supported_ops = [_]struct { u8, bool }{
+    .{ 0x08, true },
+    .{ 0x48, true },
+
     .{ 0x09, true },
     .{ 0x05, true },
     .{ 0x15, true },
