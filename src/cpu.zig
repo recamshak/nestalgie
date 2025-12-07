@@ -13,12 +13,6 @@ const StatusFlags = packed struct {
     negative: u1 = 0,
 };
 
-const Operand = struct {
-    value: u8,
-    address: ?u16 = null,
-    page_crossed: bool = false,
-};
-
 pub fn Nes6502(
     comptime read_u8: *const fn (address: u16) callconv(.@"inline") u8,
     comptime read_u16: *const fn (address: u16) callconv(.@"inline") u16,
@@ -30,6 +24,11 @@ pub fn Nes6502(
             *const fn (self: *Self, op_code: u8) u8,
             ?*const fn (self: *Self) Operand,
             u8,
+        };
+        const Operand = struct {
+            value: u8,
+            address: ?u16 = null,
+            page_crossed: bool = false,
         };
 
         pc: u16 = 0xFFFC,
@@ -275,23 +274,23 @@ pub fn Nes6502(
             op_table[0x78] = Operation{ op_sei, null, 2 };
 
             // STA - Store Accumulator
-            op_table[0x85] = Operation{ op_sta, @"zero page mode", 3 };
-            op_table[0x95] = Operation{ op_sta, @"zero page,x mode", 4 };
-            op_table[0x8d] = Operation{ op_sta, @"absolute mode", 4 };
-            op_table[0x9d] = Operation{ op_sta, @"absolute,x mode", 5 };
-            op_table[0x99] = Operation{ op_sta, @"absolute,y mode", 5 };
-            op_table[0x81] = Operation{ op_sta, @"(indirect,x) mode", 6 };
-            op_table[0x91] = Operation{ op_sta, @"(indirect),y mode", 6 };
+            op_table[0x85] = Operation{ op_sta, @"zero page mode: write", 3 };
+            op_table[0x95] = Operation{ op_sta, @"zero page,x mode: write", 4 };
+            op_table[0x8d] = Operation{ op_sta, @"absolute mode: write", 4 };
+            op_table[0x9d] = Operation{ op_sta, @"absolute,x mode: write", 5 };
+            op_table[0x99] = Operation{ op_sta, @"absolute,y mode: write", 5 };
+            op_table[0x81] = Operation{ op_sta, @"(indirect,x) mode: write", 6 };
+            op_table[0x91] = Operation{ op_sta, @"(indirect),y mode: write", 6 };
 
             // STX - Store X Register
-            op_table[0x86] = Operation{ op_stx, @"zero page mode", 3 };
-            op_table[0x96] = Operation{ op_stx, @"zero page,y mode", 4 };
-            op_table[0x8e] = Operation{ op_stx, @"absolute mode", 4 };
+            op_table[0x86] = Operation{ op_stx, @"zero page mode: write", 3 };
+            op_table[0x96] = Operation{ op_stx, @"zero page,y mode: write", 4 };
+            op_table[0x8e] = Operation{ op_stx, @"absolute mode: write", 4 };
 
             // STY - Store Y Register
-            op_table[0x84] = Operation{ op_sty, @"zero page mode", 3 };
-            op_table[0x94] = Operation{ op_sty, @"zero page,x mode", 4 };
-            op_table[0x8c] = Operation{ op_sty, @"absolute mode", 4 };
+            op_table[0x84] = Operation{ op_sty, @"zero page mode: write", 3 };
+            op_table[0x94] = Operation{ op_sty, @"zero page,x mode: write", 4 };
+            op_table[0x8c] = Operation{ op_sty, @"absolute mode: write", 4 };
 
             // TAX - Transfer Accumulator to X
             op_table[0xaa] = Operation{ op_tax, null, 2 };
@@ -639,61 +638,142 @@ pub fn Nes6502(
             self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
             return cycles(op_table[op_code]);
         }
-        fn op_pla(_: *Self, op_code: u8) u8 {
+        fn op_pla(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.a = self.pull_u8();
+            self.status.zero = @bitCast(self.a == 0);
+            self.status.negative = @bitCast(self.a & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_plp(_: *Self, op_code: u8) u8 {
+        fn op_plp(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            const b = self.status.b;
+            self.status = @bitCast(self.pull_u8() | 0x20);
+            self.status.b = b;
             return cycles(op_table[op_code]);
         }
-        fn op_rol(_: *Self, op_code: u8) u8 {
+        fn op_rol(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            const result = operand.value << 1 | @as(u8, self.status.carry);
+            if (operand.address) |address| {
+                write_u8(address, operand.value);
+                write_u8(address, result);
+            } else {
+                self.a = result;
+            }
+            self.status.carry = @bitCast(operand.value & 0x80 != 0);
+            self.status.zero = @bitCast(result == 0);
+            self.status.negative = @bitCast(result & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_ror(_: *Self, op_code: u8) u8 {
+        fn op_ror(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            const result = operand.value >> 1 | (@as(u8, self.status.carry) << 7);
+            if (operand.address) |address| {
+                write_u8(address, operand.value);
+                write_u8(address, result);
+            } else {
+                self.a = result;
+            }
+            self.status.carry = @bitCast(operand.value & 0x01 != 0);
+            self.status.zero = @bitCast(result == 0);
+            self.status.negative = @bitCast(result & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_rti(_: *Self, op_code: u8) u8 {
+        fn op_rti(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.status = @bitCast((@as(u8, @bitCast(self.status)) & 0x30) | (self.pull_u8() & 0xcf));
+            self.pc = self.pull_u16();
             return cycles(op_table[op_code]);
         }
-        fn op_rts(_: *Self, op_code: u8) u8 {
+        fn op_rts(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            _ = read_u8(0x0100 +% @as(u16, self.s));
+            self.pc = self.pull_u16() +% 1;
+            _ = read_u8(self.pc -% 1);
             return cycles(op_table[op_code]);
         }
-        fn op_sbc(_: *Self, op_code: u8) u8 {
+        fn op_sbc(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            var result, const carry1 = @addWithOverflow(self.a, ~operand.value);
+            result, const carry2 = @addWithOverflow(result, self.status.carry);
+
+            self.status.carry = carry1 | carry2;
+            self.status.zero = @bitCast(result == 0);
+            self.status.overflow = @bitCast((result ^ self.a) & (result ^ ~operand.value) & 0x80 != 0);
+            self.status.negative = @bitCast(result & 0x80 != 0);
+
+            self.a = result;
+            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+        }
+        fn op_sec(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.status.carry = 1;
             return cycles(op_table[op_code]);
         }
-        fn op_sec(_: *Self, op_code: u8) u8 {
+        fn op_sed(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.status.decimal = 1;
             return cycles(op_table[op_code]);
         }
-        fn op_sed(_: *Self, op_code: u8) u8 {
+        fn op_sei(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.status.interruptDisable = 1;
             return cycles(op_table[op_code]);
         }
-        fn op_sei(_: *Self, op_code: u8) u8 {
+        fn op_sta(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            write_u8(operand.address.?, self.a);
             return cycles(op_table[op_code]);
         }
-        fn op_sta(_: *Self, op_code: u8) u8 {
+        fn op_stx(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            write_u8(operand.address.?, self.x);
             return cycles(op_table[op_code]);
         }
-        fn op_stx(_: *Self, op_code: u8) u8 {
+        fn op_sty(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]);
+            write_u8(operand.address.?, self.y);
             return cycles(op_table[op_code]);
         }
-        fn op_sty(_: *Self, op_code: u8) u8 {
+        fn op_tax(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.x = self.a;
+            self.status.zero = @bitCast(self.x == 0);
+            self.status.negative = @bitCast(self.x & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_tax(_: *Self, op_code: u8) u8 {
+        fn op_tay(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.y = self.a;
+            self.status.zero = @bitCast(self.y == 0);
+            self.status.negative = @bitCast(self.y & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_tay(_: *Self, op_code: u8) u8 {
+        fn op_tsx(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.x = self.s;
+            self.status.zero = @bitCast(self.x == 0);
+            self.status.negative = @bitCast(self.x & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_tsx(_: *Self, op_code: u8) u8 {
+        fn op_txa(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.a = self.x;
+            self.status.zero = @bitCast(self.a == 0);
+            self.status.negative = @bitCast(self.a & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_txa(_: *Self, op_code: u8) u8 {
+        fn op_txs(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.s = self.x;
             return cycles(op_table[op_code]);
         }
-        fn op_txs(_: *Self, op_code: u8) u8 {
-            return cycles(op_table[op_code]);
-        }
-        fn op_tya(_: *Self, op_code: u8) u8 {
+        fn op_tya(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.a = self.y;
+            self.status.zero = @bitCast(self.a == 0);
+            self.status.negative = @bitCast(self.a & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
 
@@ -704,6 +784,18 @@ pub fn Nes6502(
         inline fn push_u16(self: *Self, value: u16) void {
             self.push_u8(@truncate(value >> 8));
             self.push_u8(@truncate(value & 0x00ff));
+        }
+        inline fn pull_u8(self: *Self) u8 {
+            _ = read_u8(0x0100 +% @as(u16, self.s));
+            self.s +%= 1;
+            return read_u8(0x0100 +% @as(u16, self.s));
+        }
+        inline fn pull_u16(self: *Self) u16 {
+            self.s +%= 1;
+            const lo = @as(u16, read_u8(0x0100 +% @as(u16, self.s)));
+            self.s +%= 1;
+            const hi = @as(u16, read_u8(0x0100 +% @as(u16, self.s)));
+            return hi << 8 | lo;
         }
         inline fn read_stack_u8(self: *Self) u8 {
             return read_u8(0x0100 +% @as(u16, self.s));
@@ -729,11 +821,21 @@ pub fn Nes6502(
             const address = self.read_next_u8();
             return .{ .address = address, .value = read_u8(address), .page_crossed = false };
         }
+        fn @"zero page mode: write"(self: *Self) Operand {
+            const address = self.read_next_u8();
+            return .{ .address = address, .value = 0, .page_crossed = false };
+        }
         fn @"zero page,x mode"(self: *Self) Operand {
             const index = self.read_next_u8();
             _ = read_u8(index);
             const address = index +% self.x;
             return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+        }
+        fn @"zero page,x mode: write"(self: *Self) Operand {
+            const index = self.read_next_u8();
+            _ = read_u8(index);
+            const address = index +% self.x;
+            return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"zero page,y mode"(self: *Self) Operand {
             const index = self.read_next_u8();
@@ -741,9 +843,19 @@ pub fn Nes6502(
             const address = index +% self.y;
             return .{ .address = address, .value = read_u8(address), .page_crossed = false };
         }
+        fn @"zero page,y mode: write"(self: *Self) Operand {
+            const index = self.read_next_u8();
+            _ = read_u8(index);
+            const address = index +% self.y;
+            return .{ .address = address, .value = 0, .page_crossed = false };
+        }
         fn @"absolute mode"(self: *Self) Operand {
             const address = self.read_next_u16();
             return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+        }
+        fn @"absolute mode: write"(self: *Self) Operand {
+            const address = self.read_next_u16();
+            return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"absolute,x mode"(self: *Self) Operand {
             const lo = @as(u16, self.read_next_u8());
@@ -756,6 +868,19 @@ pub fn Nes6502(
             }
             return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
         }
+        fn @"absolute,x mode: write"(self: *Self) Operand {
+            const lo = @as(u16, self.read_next_u8());
+            const hi = @as(u16, self.read_next_u8()) << 8;
+            const address = (hi | lo) +% self.x;
+            const address_without_carry = hi + ((lo + self.x) & 0x00ff);
+            const page_crossed = address & 0xff00 != hi;
+            if (page_crossed) {
+                _ = read_u8(address_without_carry);
+            } else {
+                _ = read_u8(address);
+            }
+            return .{ .address = address, .value = 0, .page_crossed = page_crossed };
+        }
         fn @"absolute,y mode"(self: *Self) Operand {
             const lo = @as(u16, self.read_next_u8());
             const hi = @as(u16, self.read_next_u8()) << 8;
@@ -767,6 +892,20 @@ pub fn Nes6502(
             }
             return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
         }
+        fn @"absolute,y mode: write"(self: *Self) Operand {
+            const lo = @as(u16, self.read_next_u8());
+            const hi = @as(u16, self.read_next_u8()) << 8;
+            const address = (hi | lo) +% self.y;
+            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const page_crossed = address & 0xff00 != hi;
+            if (page_crossed) {
+                _ = read_u8(address_without_carry);
+            } else {
+                _ = read_u8(address);
+            }
+
+            return .{ .address = address, .value = 0, .page_crossed = page_crossed };
+        }
         fn @"(indirect,x) mode"(self: *Self) Operand {
             const index = self.read_next_u8();
             _ = read_u8(index);
@@ -774,6 +913,14 @@ pub fn Nes6502(
             const hi = @as(u16, read_u8(index +% self.x +% 1)) << 8;
             const address = hi | lo;
             return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+        }
+        fn @"(indirect,x) mode: write"(self: *Self) Operand {
+            const index = self.read_next_u8();
+            _ = read_u8(index);
+            const lo = @as(u16, read_u8(index +% self.x));
+            const hi = @as(u16, read_u8(index +% self.x +% 1)) << 8;
+            const address = hi | lo;
+            return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"(indirect),y mode"(self: *Self) Operand {
             const base_index = self.read_next_u8();
@@ -787,6 +934,20 @@ pub fn Nes6502(
             }
             return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
         }
+        fn @"(indirect),y mode: write"(self: *Self) Operand {
+            const base_index = self.read_next_u8();
+            const lo = @as(u16, read_u8(base_index));
+            const hi = @as(u16, read_u8(base_index +% 1)) << 8;
+            const address = (hi | lo) +% self.y;
+            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const page_crossed = address & 0xff00 != hi;
+            if (page_crossed) {
+                _ = read_u8(address_without_carry);
+            } else {
+                _ = read_u8(address);
+            }
+            return .{ .address = address, .value = 0, .page_crossed = page_crossed };
+        }
     };
 }
 
@@ -794,6 +955,61 @@ pub fn Nes6502(
 /// Tests
 ////////////////////////////////////////////////////////////////////////////////
 const supported_ops = [_]struct { u8, bool }{
+    .{ 0xaa, true },
+    .{ 0xa8, true },
+    .{ 0xba, true },
+    .{ 0x8a, true },
+    .{ 0x9a, true },
+    .{ 0x98, true },
+
+    .{ 0x84, true },
+    .{ 0x94, true },
+    .{ 0x8c, true },
+
+    .{ 0x86, true },
+    .{ 0x96, true },
+    .{ 0x8e, true },
+
+    .{ 0x85, true },
+    .{ 0x95, true },
+    .{ 0x8d, true },
+    .{ 0x9d, true },
+    .{ 0x99, true },
+    .{ 0x81, true },
+    .{ 0x91, true },
+
+    .{ 0x78, true },
+    .{ 0xf8, true },
+    .{ 0x38, true },
+
+    .{ 0xe9, true },
+    .{ 0xe5, true },
+    .{ 0xf5, true },
+    .{ 0xed, true },
+    .{ 0xfd, true },
+    .{ 0xf9, true },
+    .{ 0xe1, true },
+    .{ 0xf1, true },
+
+    .{ 0x60, true },
+    .{ 0x40, true },
+
+    .{ 0x6a, true },
+    .{ 0x66, true },
+    .{ 0x76, true },
+    .{ 0x6e, true },
+    // FIXME: check why there is a double read?
+    .{ 0x7e, false },
+
+    .{ 0x2a, true },
+    .{ 0x26, true },
+    .{ 0x36, true },
+    .{ 0x2e, true },
+    // FIXME: check why there is a double read?
+    .{ 0x3e, false },
+
+    .{ 0x28, true },
+    .{ 0x68, true },
     .{ 0x08, true },
     .{ 0x48, true },
 
@@ -902,7 +1118,7 @@ const supported_ops = [_]struct { u8, bool }{
     .{ 0xb0, true },
     .{ 0x90, true },
 
-    // FIXME: fix missing read operation
+    // FIXME: check why there is a double read?
     .{ 0x1e, false },
     .{ 0x0e, true },
     .{ 0x16, true },
@@ -1066,6 +1282,7 @@ test "nes6502 test suite" {
                 std.debug.print("x\t{x:02}\t\t{x:02}\n", .{ expected.x, cpu.x });
                 std.debug.print("y\t{x:02}\t\t{x:02}\n", .{ expected.y, cpu.y });
                 std.debug.print("s\t{x:02}\t\t{x:02}\n", .{ expected.s, cpu.s });
+                std.debug.print("p\t{x:02}\t\t{x:02}\n", .{ expected.p, @as(u8, @bitCast(cpu.status)) });
                 const expected_status: StatusFlags = @bitCast(expected.p);
                 std.debug.print("carry\t{d}\t\t{d}\n", .{ expected_status.carry, cpu.status.carry });
                 std.debug.print("zero\t{d}\t\t{d}\n", .{ expected_status.zero, cpu.status.zero });
