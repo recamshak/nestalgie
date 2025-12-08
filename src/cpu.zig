@@ -2,10 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-const StatusFlags = packed struct {
+const StatusFlags = packed struct(u8) {
     carry: u1 = 0,
     zero: u1 = 0,
-    interruptDisable: u1 = 0,
+    interrupt_disable: u1 = 0,
     decimal: u1 = 0,
     b: u1 = 0,
     _pad: u1 = 1,
@@ -20,8 +20,9 @@ pub fn Nes6502(
 ) type {
     return struct {
         const Self = @This();
+        const OpFn = fn (self: *Self, op_code: u8) u8;
         const Operation = struct {
-            *const fn (self: *Self, op_code: u8) u8,
+            *const OpFn,
             ?*const fn (self: *Self) Operand,
             u8,
         };
@@ -41,275 +42,298 @@ pub fn Nes6502(
         irq: u1 = 0,
         nmi: u1 = 0,
 
-        const illegal = Operation{ .execute = op_illegal, .cycles = 1 };
-        const nop = Operation{ op_nop, null, 2 };
-        const not_supported = Operation{ .execute = op_not_supported, .cycles = 1 };
+        const stp = Operation{ op_stp, null, 0 };
+        const not_supported = Operation{ op_not_supported, null, 0 };
 
-        var op_table: [256]Operation = [_]Operation{.{ op_adc, @"absolute mode", 4 }} ** 256;
-        pub fn init() void {
-            // ADC - Add with Carry
-            op_table[0x69] = Operation{ op_adc, @"#immediate mode", 2 };
-            op_table[0x65] = Operation{ op_adc, @"zero page mode", 3 };
-            op_table[0x75] = Operation{ op_adc, @"zero page,x mode", 4 };
-            op_table[0x6d] = Operation{ op_adc, @"absolute mode", 4 };
-            op_table[0x7d] = Operation{ op_adc, @"absolute,x mode", 4 };
-            op_table[0x79] = Operation{ op_adc, @"absolute,y mode", 4 };
-            op_table[0x61] = Operation{ op_adc, @"(indirect,x) mode", 6 };
-            op_table[0x71] = Operation{ op_adc, @"(indirect),y mode", 5 };
+        var op_table: [256]Operation = [_]Operation{
+            // 0x00
+            Operation{ op_brk, null, 7 },
+            Operation{ op_ora, @"(indirect,x) mode", 6 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page mode", 3 },
+            Operation{ op_ora, @"zero page mode", 3 },
+            Operation{ op_asl, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_php, null, 3 },
+            Operation{ op_ora, @"#immediate mode", 2 },
+            Operation{ op_asl, @"accumulator mode", 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute mode", 4 },
+            Operation{ op_ora, @"absolute mode", 4 },
+            Operation{ op_asl, @"absolute mode", 6 },
+            not_supported,
 
-            // AND - Logical AND
-            op_table[0x29] = Operation{ op_and, @"#immediate mode", 2 };
-            op_table[0x25] = Operation{ op_and, @"zero page mode", 3 };
-            op_table[0x35] = Operation{ op_and, @"zero page,x mode", 4 };
-            op_table[0x2d] = Operation{ op_and, @"absolute mode", 4 };
-            op_table[0x3d] = Operation{ op_and, @"absolute,x mode", 4 };
-            op_table[0x39] = Operation{ op_and, @"absolute,y mode", 4 };
-            op_table[0x21] = Operation{ op_and, @"(indirect,x) mode", 6 };
-            op_table[0x31] = Operation{ op_and, @"(indirect),y mode", 5 };
+            // 0x10
+            Operation{ op_bpl, null, 0 },
+            Operation{ op_ora, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_ora, @"zero page,x mode", 4 },
+            Operation{ op_asl, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_clc, null, 2 },
+            Operation{ op_ora, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_ora, @"absolute,x mode", 4 },
+            Operation{ op_asl, @"absolute,x mode", 7 },
+            not_supported,
 
-            // ASL - Arithmetic Shift Left
-            op_table[0x0a] = Operation{ op_asl, @"accumulator mode", 2 };
-            op_table[0x06] = Operation{ op_asl, @"zero page mode", 5 };
-            op_table[0x16] = Operation{ op_asl, @"zero page,x mode", 6 };
-            op_table[0x0e] = Operation{ op_asl, @"absolute mode", 6 };
-            op_table[0x1e] = Operation{ op_asl, @"absolute,x mode", 7 };
+            // 0x20
+            Operation{ op_jsr, @"absolute mode", 6 },
+            Operation{ op_and, @"(indirect,x) mode", 6 },
+            stp,
+            not_supported,
+            Operation{ op_bit, @"zero page mode", 3 },
+            Operation{ op_and, @"zero page mode", 3 },
+            Operation{ op_rol, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_plp, null, 4 },
+            Operation{ op_and, @"#immediate mode", 2 },
+            Operation{ op_rol, @"accumulator mode", 2 },
+            not_supported,
+            Operation{ op_bit, @"absolute mode", 4 },
+            Operation{ op_and, @"absolute mode", 4 },
+            Operation{ op_rol, @"absolute mode", 6 },
+            not_supported,
 
-            // BCC - Branch if Carry Clear
-            op_table[0x90] = Operation{ op_bcc, null, 0 };
+            // 0x30
+            Operation{ op_bmi, null, 0 },
+            Operation{ op_and, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_and, @"zero page,x mode", 4 },
+            Operation{ op_rol, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_sec, null, 2 },
+            Operation{ op_and, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_and, @"absolute,x mode", 4 },
+            Operation{ op_rol, @"absolute,x mode", 7 },
+            not_supported,
 
-            // BCS - Branch if Carry Set
-            op_table[0xb0] = Operation{ op_bcs, null, 0 };
+            // 0x40
+            Operation{ op_rti, null, 6 },
+            Operation{ op_eor, @"(indirect,x) mode", 6 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page mode", 3 },
+            Operation{ op_eor, @"zero page mode", 3 },
+            Operation{ op_lsr, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_pha, null, 3 },
+            Operation{ op_eor, @"#immediate mode", 2 },
+            Operation{ op_lsr, @"accumulator mode", 2 },
+            not_supported,
+            Operation{ op_jmp, null, 3 },
+            Operation{ op_eor, @"absolute mode", 4 },
+            Operation{ op_lsr, @"absolute mode", 6 },
+            not_supported,
 
-            // BEQ - Branch if Equal (Zero Set)
-            op_table[0xf0] = Operation{ op_beq, null, 0 };
+            // 0x50
+            Operation{ op_bvc, null, 0 },
+            Operation{ op_eor, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_eor, @"zero page,x mode", 4 },
+            Operation{ op_lsr, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_cli, null, 2 },
+            Operation{ op_eor, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_eor, @"absolute,x mode", 4 },
+            Operation{ op_lsr, @"absolute,x mode", 7 },
+            not_supported,
 
-            // BIT - Bit Test
-            op_table[0x24] = Operation{ op_bit, @"zero page mode", 3 };
-            op_table[0x2c] = Operation{ op_bit, @"absolute mode", 4 };
+            // 0x60
+            Operation{ op_rts, null, 6 },
+            Operation{ op_adc, @"(indirect,x) mode", 6 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page mode", 3 },
+            Operation{ op_adc, @"zero page mode", 3 },
+            Operation{ op_ror, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_pla, null, 4 },
+            Operation{ op_adc, @"#immediate mode", 2 },
+            Operation{ op_ror, @"accumulator mode", 2 },
+            not_supported,
+            Operation{ op_jmp_indirect, null, 5 },
+            Operation{ op_adc, @"absolute mode", 4 },
+            Operation{ op_ror, @"absolute mode", 6 },
+            not_supported,
 
-            // BMI - Branch if Minus
-            op_table[0x30] = Operation{ op_bmi, null, 0 };
+            // 0x70
+            Operation{ op_bvs, null, 0 },
+            Operation{ op_adc, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_adc, @"zero page,x mode", 4 },
+            Operation{ op_ror, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_sei, null, 2 },
+            Operation{ op_adc, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_adc, @"absolute,x mode", 4 },
+            Operation{ op_ror, @"absolute,x mode", 7 },
+            not_supported,
 
-            // BNE - Branch if Not Equal
-            op_table[0xd0] = Operation{ op_bne, null, 0 };
+            // 0x80
+            Operation{ op_nop, @"#immediate mode", 2 },
+            Operation{ op_sta, @"(indirect,x) mode: write", 6 },
+            Operation{ op_nop, @"#immediate mode", 2 },
+            not_supported,
+            Operation{ op_sty, @"zero page mode: write", 3 },
+            Operation{ op_sta, @"zero page mode: write", 3 },
+            Operation{ op_stx, @"zero page mode: write", 3 },
+            not_supported,
+            Operation{ op_dey, null, 2 },
+            Operation{ op_nop, @"#immediate mode", 2 },
+            Operation{ op_txa, null, 2 },
+            not_supported,
+            Operation{ op_sty, @"absolute mode: write", 4 },
+            Operation{ op_sta, @"absolute mode: write", 4 },
+            Operation{ op_stx, @"absolute mode: write", 4 },
+            not_supported,
 
-            // BPL - Branch if Plus
-            op_table[0x10] = Operation{ op_bpl, null, 0 };
+            // 0x90
+            Operation{ op_bcc, null, 0 },
+            Operation{ op_sta, @"(indirect),y mode: write", 6 },
+            stp,
+            not_supported,
+            Operation{ op_sty, @"zero page,x mode: write", 4 },
+            Operation{ op_sta, @"zero page,x mode: write", 4 },
+            Operation{ op_stx, @"zero page,y mode: write", 4 },
+            not_supported,
+            Operation{ op_tya, null, 2 },
+            Operation{ op_sta, @"absolute,y mode: write", 5 },
+            Operation{ op_txs, null, 2 },
+            not_supported,
+            not_supported,
+            Operation{ op_sta, @"absolute,x mode: write", 5 },
+            not_supported,
+            not_supported,
 
-            // BRK - Break
-            op_table[0x00] = Operation{ op_brk, null, 7 };
+            // 0xA0
+            Operation{ op_ldy, @"#immediate mode", 2 },
+            Operation{ op_lda, @"(indirect,x) mode", 6 },
+            Operation{ op_ldx, @"#immediate mode", 2 },
+            not_supported,
+            Operation{ op_ldy, @"zero page mode", 3 },
+            Operation{ op_lda, @"zero page mode", 3 },
+            Operation{ op_ldx, @"zero page mode", 3 },
+            not_supported,
+            Operation{ op_tay, null, 2 },
+            Operation{ op_lda, @"#immediate mode", 2 },
+            Operation{ op_tax, null, 2 },
+            not_supported,
+            Operation{ op_ldy, @"absolute mode", 4 },
+            Operation{ op_lda, @"absolute mode", 4 },
+            Operation{ op_ldx, @"absolute mode", 4 },
+            not_supported,
 
-            // BVC - Branch if Overflow Clear
-            op_table[0x50] = Operation{ op_bvc, null, 0 };
+            // 0xB0
+            Operation{ op_bcs, null, 0 },
+            Operation{ op_lda, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_ldy, @"zero page,x mode", 4 },
+            Operation{ op_lda, @"zero page,x mode", 4 },
+            Operation{ op_ldx, @"zero page,y mode", 4 },
+            not_supported,
+            Operation{ op_clv, null, 2 },
+            Operation{ op_lda, @"absolute,y mode", 4 },
+            Operation{ op_tsx, null, 2 },
+            not_supported,
+            Operation{ op_ldy, @"absolute,x mode", 4 },
+            Operation{ op_lda, @"absolute,x mode", 4 },
+            Operation{ op_ldx, @"absolute,y mode", 4 },
+            not_supported,
 
-            // BVS - Branch if Overflow Set
-            op_table[0x70] = Operation{ op_bvs, null, 0 };
+            // 0xC0
+            Operation{ op_cpy, @"#immediate mode", 2 },
+            Operation{ op_cmp, @"(indirect,x) mode", 6 },
+            Operation{ op_nop, @"#immediate mode", 2 },
+            not_supported,
+            Operation{ op_cpy, @"zero page mode", 3 },
+            Operation{ op_cmp, @"zero page mode", 3 },
+            Operation{ op_dec, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_iny, null, 2 },
+            Operation{ op_cmp, @"#immediate mode", 2 },
+            Operation{ op_dex, null, 2 },
+            not_supported,
+            Operation{ op_cpy, @"absolute mode", 4 },
+            Operation{ op_cmp, @"absolute mode", 4 },
+            Operation{ op_dec, @"absolute mode", 6 },
+            not_supported,
 
-            // CLC - Clear Carry Flag
-            op_table[0x18] = Operation{ op_clc, null, 2 };
+            // 0xD0
+            Operation{ op_bne, null, 0 },
+            Operation{ op_cmp, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_cmp, @"zero page,x mode", 4 },
+            Operation{ op_dec, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_cld, null, 2 },
+            Operation{ op_cmp, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_cmp, @"absolute,x mode", 4 },
+            Operation{ op_dec, @"absolute,x mode", 7 },
+            not_supported,
 
-            // CLD - Clear Decimal Mode
-            op_table[0xd8] = Operation{ op_cld, null, 2 };
+            // 0xE0
+            Operation{ op_cpx, @"#immediate mode", 2 },
+            Operation{ op_sbc, @"(indirect,x) mode", 6 },
+            Operation{ op_nop, @"#immediate mode", 2 },
+            not_supported,
+            Operation{ op_cpx, @"zero page mode", 3 },
+            Operation{ op_sbc, @"zero page mode", 3 },
+            Operation{ op_inc, @"zero page mode", 5 },
+            not_supported,
+            Operation{ op_inx, null, 2 },
+            Operation{ op_sbc, @"#immediate mode", 2 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_cpx, @"absolute mode", 4 },
+            Operation{ op_sbc, @"absolute mode", 4 },
+            Operation{ op_inc, @"absolute mode", 6 },
+            not_supported,
 
-            // CLI - Clear Interrupt Disable
-            op_table[0x58] = Operation{ op_cli, null, 2 };
-
-            // CLV - Clear Overflow Flag
-            op_table[0xb8] = Operation{ op_clv, null, 2 };
-
-            // CMP - Compare Accumulator
-            op_table[0xc9] = Operation{ op_cmp, @"#immediate mode", 2 };
-            op_table[0xc5] = Operation{ op_cmp, @"zero page mode", 3 };
-            op_table[0xd5] = Operation{ op_cmp, @"zero page,x mode", 4 };
-            op_table[0xcd] = Operation{ op_cmp, @"absolute mode", 4 };
-            op_table[0xdd] = Operation{ op_cmp, @"absolute,x mode", 4 };
-            op_table[0xd9] = Operation{ op_cmp, @"absolute,y mode", 4 };
-            op_table[0xc1] = Operation{ op_cmp, @"(indirect,x) mode", 6 };
-            op_table[0xd1] = Operation{ op_cmp, @"(indirect),y mode", 5 };
-
-            // CPX - Compare X Register
-            op_table[0xe0] = Operation{ op_cpx, @"#immediate mode", 2 };
-            op_table[0xe4] = Operation{ op_cpx, @"zero page mode", 3 };
-            op_table[0xec] = Operation{ op_cpx, @"absolute mode", 4 };
-
-            // CPY - Compare Y Register
-            op_table[0xc0] = Operation{ op_cpy, @"#immediate mode", 2 };
-            op_table[0xc4] = Operation{ op_cpy, @"zero page mode", 3 };
-            op_table[0xcc] = Operation{ op_cpy, @"absolute mode", 4 };
-
-            // DEC - Decrement Memory
-            op_table[0xc6] = Operation{ op_dec, @"zero page mode", 5 };
-            op_table[0xd6] = Operation{ op_dec, @"zero page,x mode", 6 };
-            op_table[0xce] = Operation{ op_dec, @"absolute mode", 6 };
-            op_table[0xde] = Operation{ op_dec, @"absolute,x mode", 7 };
-
-            // DEX - Decrement X Register
-            op_table[0xca] = Operation{ op_dex, null, 2 };
-
-            // DEY - Decrement Y Register
-            op_table[0x88] = Operation{ op_dey, null, 2 };
-
-            // EOR - Exclusive OR
-            op_table[0x49] = Operation{ op_eor, @"#immediate mode", 2 };
-            op_table[0x45] = Operation{ op_eor, @"zero page mode", 3 };
-            op_table[0x55] = Operation{ op_eor, @"zero page,x mode", 4 };
-            op_table[0x4d] = Operation{ op_eor, @"absolute mode", 4 };
-            op_table[0x5d] = Operation{ op_eor, @"absolute,x mode", 4 };
-            op_table[0x59] = Operation{ op_eor, @"absolute,y mode", 4 };
-            op_table[0x41] = Operation{ op_eor, @"(indirect,x) mode", 6 };
-            op_table[0x51] = Operation{ op_eor, @"(indirect),y mode", 5 };
-
-            // INC - Increment Memory
-            op_table[0xe6] = Operation{ op_inc, @"zero page mode", 5 };
-            op_table[0xf6] = Operation{ op_inc, @"zero page,x mode", 6 };
-            op_table[0xee] = Operation{ op_inc, @"absolute mode", 6 };
-            op_table[0xfe] = Operation{ op_inc, @"absolute,x mode", 7 };
-
-            // INX - Increment X Register
-            op_table[0xe8] = Operation{ op_inx, null, 2 };
-
-            // INY - Increment Y Register
-            op_table[0xc8] = Operation{ op_iny, null, 2 };
-
-            // JMP - Jump
-            op_table[0x4c] = Operation{ op_jmp, null, 3 };
-            op_table[0x6c] = Operation{ op_jmp_indirect, null, 5 };
-
-            // JSR - Jump to Subroutine
-            op_table[0x20] = Operation{ op_jsr, @"absolute mode", 6 };
-
-            // LDA - Load Accumulator
-            op_table[0xa9] = Operation{ op_lda, @"#immediate mode", 2 };
-            op_table[0xa5] = Operation{ op_lda, @"zero page mode", 3 };
-            op_table[0xb5] = Operation{ op_lda, @"zero page,x mode", 4 };
-            op_table[0xad] = Operation{ op_lda, @"absolute mode", 4 };
-            op_table[0xbd] = Operation{ op_lda, @"absolute,x mode", 4 };
-            op_table[0xb9] = Operation{ op_lda, @"absolute,y mode", 4 };
-            op_table[0xa1] = Operation{ op_lda, @"(indirect,x) mode", 6 };
-            op_table[0xb1] = Operation{ op_lda, @"(indirect),y mode", 5 };
-
-            // LDX - Load X Register
-            op_table[0xa2] = Operation{ op_ldx, @"#immediate mode", 2 };
-            op_table[0xa6] = Operation{ op_ldx, @"zero page mode", 3 };
-            op_table[0xb6] = Operation{ op_ldx, @"zero page,y mode", 4 };
-            op_table[0xae] = Operation{ op_ldx, @"absolute mode", 4 };
-            op_table[0xbe] = Operation{ op_ldx, @"absolute,y mode", 4 };
-
-            // LDY - Load Y Register
-            op_table[0xa0] = Operation{ op_ldy, @"#immediate mode", 2 };
-            op_table[0xa4] = Operation{ op_ldy, @"zero page mode", 3 };
-            op_table[0xb4] = Operation{ op_ldy, @"zero page,x mode", 4 };
-            op_table[0xac] = Operation{ op_ldy, @"absolute mode", 4 };
-            op_table[0xbc] = Operation{ op_ldy, @"absolute,x mode", 4 };
-
-            // LSR - Logical Shift Right
-            op_table[0x4a] = Operation{ op_lsr, @"accumulator mode", 2 };
-            op_table[0x46] = Operation{ op_lsr, @"zero page mode", 5 };
-            op_table[0x56] = Operation{ op_lsr, @"zero page,x mode", 6 };
-            op_table[0x4e] = Operation{ op_lsr, @"absolute mode", 6 };
-            op_table[0x5e] = Operation{ op_lsr, @"absolute,x mode", 7 };
-
-            // NOP - No Operation
-            op_table[0xea] = nop;
-
-            // ORA - Logical Inclusive OR
-            op_table[0x09] = Operation{ op_ora, @"#immediate mode", 2 };
-            op_table[0x05] = Operation{ op_ora, @"zero page mode", 3 };
-            op_table[0x15] = Operation{ op_ora, @"zero page,x mode", 4 };
-            op_table[0x0d] = Operation{ op_ora, @"absolute mode", 4 };
-            op_table[0x1d] = Operation{ op_ora, @"absolute,x mode", 4 };
-            op_table[0x19] = Operation{ op_ora, @"absolute,y mode", 4 };
-            op_table[0x01] = Operation{ op_ora, @"(indirect,x) mode", 6 };
-            op_table[0x11] = Operation{ op_ora, @"(indirect),y mode", 5 };
-
-            // PHA - Push Accumulator
-            op_table[0x48] = Operation{ op_pha, null, 3 };
-
-            // PHP - Push Processor Status
-            op_table[0x08] = Operation{ op_php, null, 3 };
-
-            // PLA - Pull Accumulator
-            op_table[0x68] = Operation{ op_pla, null, 4 };
-
-            // PLP - Pull Processor Status
-            op_table[0x28] = Operation{ op_plp, null, 4 };
-
-            // ROL - Rotate Left
-            op_table[0x2a] = Operation{ op_rol, @"accumulator mode", 2 };
-            op_table[0x26] = Operation{ op_rol, @"zero page mode", 5 };
-            op_table[0x36] = Operation{ op_rol, @"zero page,x mode", 6 };
-            op_table[0x2e] = Operation{ op_rol, @"absolute mode", 6 };
-            op_table[0x3e] = Operation{ op_rol, @"absolute,x mode", 7 };
-
-            // ROR - Rotate Right
-            op_table[0x6a] = Operation{ op_ror, @"accumulator mode", 2 };
-            op_table[0x66] = Operation{ op_ror, @"zero page mode", 5 };
-            op_table[0x76] = Operation{ op_ror, @"zero page,x mode", 6 };
-            op_table[0x6e] = Operation{ op_ror, @"absolute mode", 6 };
-            op_table[0x7e] = Operation{ op_ror, @"absolute,x mode", 7 };
-
-            // RTI - Return from Interrupt
-            op_table[0x40] = Operation{ op_rti, null, 6 };
-
-            // RTS - Return from Subroutine
-            op_table[0x60] = Operation{ op_rts, null, 6 };
-
-            // SBC - Subtract with Carry
-            op_table[0xe9] = Operation{ op_sbc, @"#immediate mode", 2 };
-            op_table[0xe5] = Operation{ op_sbc, @"zero page mode", 3 };
-            op_table[0xf5] = Operation{ op_sbc, @"zero page,x mode", 4 };
-            op_table[0xed] = Operation{ op_sbc, @"absolute mode", 4 };
-            op_table[0xfd] = Operation{ op_sbc, @"absolute,x mode", 4 };
-            op_table[0xf9] = Operation{ op_sbc, @"absolute,y mode", 4 };
-            op_table[0xe1] = Operation{ op_sbc, @"(indirect,x) mode", 6 };
-            op_table[0xf1] = Operation{ op_sbc, @"(indirect),y mode", 5 };
-
-            // SEC - Set Carry Flag
-            op_table[0x38] = Operation{ op_sec, null, 2 };
-
-            // SED - Set Decimal Flag
-            op_table[0xf8] = Operation{ op_sed, null, 2 };
-
-            // SEI - Set Interrupt Disable
-            op_table[0x78] = Operation{ op_sei, null, 2 };
-
-            // STA - Store Accumulator
-            op_table[0x85] = Operation{ op_sta, @"zero page mode: write", 3 };
-            op_table[0x95] = Operation{ op_sta, @"zero page,x mode: write", 4 };
-            op_table[0x8d] = Operation{ op_sta, @"absolute mode: write", 4 };
-            op_table[0x9d] = Operation{ op_sta, @"absolute,x mode: write", 5 };
-            op_table[0x99] = Operation{ op_sta, @"absolute,y mode: write", 5 };
-            op_table[0x81] = Operation{ op_sta, @"(indirect,x) mode: write", 6 };
-            op_table[0x91] = Operation{ op_sta, @"(indirect),y mode: write", 6 };
-
-            // STX - Store X Register
-            op_table[0x86] = Operation{ op_stx, @"zero page mode: write", 3 };
-            op_table[0x96] = Operation{ op_stx, @"zero page,y mode: write", 4 };
-            op_table[0x8e] = Operation{ op_stx, @"absolute mode: write", 4 };
-
-            // STY - Store Y Register
-            op_table[0x84] = Operation{ op_sty, @"zero page mode: write", 3 };
-            op_table[0x94] = Operation{ op_sty, @"zero page,x mode: write", 4 };
-            op_table[0x8c] = Operation{ op_sty, @"absolute mode: write", 4 };
-
-            // TAX - Transfer Accumulator to X
-            op_table[0xaa] = Operation{ op_tax, null, 2 };
-
-            // TAY - Transfer Accumulator to Y
-            op_table[0xa8] = Operation{ op_tay, null, 2 };
-
-            // TSX - Transfer Stack Pointer to X
-            op_table[0xba] = Operation{ op_tsx, null, 2 };
-
-            // TXA - Transfer X to Accumulator
-            op_table[0x8a] = Operation{ op_txa, null, 2 };
-
-            // TXS - Transfer X to Stack Pointer
-            op_table[0x9a] = Operation{ op_txs, null, 2 };
-
-            // TYA - Transfer Y to Accumulator
-            op_table[0x98] = Operation{ op_tya, null, 2 };
-        }
+            // 0xF0
+            Operation{ op_beq, null, 0 },
+            Operation{ op_sbc, @"(indirect),y mode", 5 },
+            stp,
+            not_supported,
+            Operation{ op_nop, @"zero page,x mode", 4 },
+            Operation{ op_sbc, @"zero page,x mode", 4 },
+            Operation{ op_inc, @"zero page,x mode", 6 },
+            not_supported,
+            Operation{ op_sed, null, 2 },
+            Operation{ op_sbc, @"absolute,y mode", 4 },
+            Operation{ op_nop, null, 2 },
+            not_supported,
+            Operation{ op_nop, @"absolute,x mode", 4 },
+            Operation{ op_sbc, @"absolute,x mode", 4 },
+            Operation{ op_inc, @"absolute,x mode", 7 },
+            not_supported,
+        };
 
         inline fn read_next_u8(self: *Self) u8 {
             defer self.pc +%= 1;
@@ -327,38 +351,103 @@ pub fn Nes6502(
             return self.execute(op, op_code);
         }
 
-        fn op_illegal(_: *Self) void {
-            unreachable;
-        }
         fn op_nop(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            if (op_table[op_code].@"1" != null) {
+                const operand = self.fetch_operand(op_table[op_code]);
+                return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+            } else {
+                _ = read_u8(self.pc);
+                return cycles(op_table[op_code]);
+            }
+        }
+        fn op_not_supported(_: *Self, op_code: u8) u8 {
+            var buf: [2]u8 = undefined;
+            _ = std.fmt.bufPrint(&buf, "{X:02}", .{op_code}) catch unreachable;
+            @panic("Operation not supported: 0x" ++ buf);
+        }
+
+        fn add_with_carry(comptime invert: bool) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    const value = if (invert) ~operand.value else operand.value;
+                    var result, const carry1 = @addWithOverflow(self.a, value);
+                    result, const carry2 = @addWithOverflow(result, self.status.carry);
+
+                    self.status.carry = carry1 | carry2;
+                    self.status.zero = @bitCast(result == 0);
+                    self.status.overflow = @bitCast((result ^ self.a) & (result ^ value) & 0x80 != 0);
+                    self.status.negative = @bitCast(result & 0x80 != 0);
+                    self.a = result;
+
+                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+                }
+            }.op;
+        }
+        const op_adc = add_with_carry(false);
+        const op_sbc = add_with_carry(true);
+
+        fn increment_memory(comptime amount: i3) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    const result = if (amount >= 0) operand.value +% amount else operand.value -% (-amount);
+                    write_u8(operand.address.?, operand.value);
+                    write_u8(operand.address.?, result);
+                    self.status.zero = @bitCast(result == 0);
+                    self.status.negative = @bitCast(result & 0x80 != 0);
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
+        }
+        fn increment_register(comptime register: []const u8, comptime amount: i3) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    _ = read_u8(self.pc);
+                    const result = if (amount >= 0) @field(self, register) +% amount else @field(self, register) -% (-amount);
+                    @field(self, register) = result;
+                    self.status.zero = @bitCast(result == 0);
+                    self.status.negative = @bitCast(result & 0x80 != 0);
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
+        }
+        const op_inc = increment_memory(1);
+        const op_dec = increment_memory(-1);
+        const op_inx = increment_register("x", 1);
+        const op_dex = increment_register("x", -1);
+        const op_iny = increment_register("y", 1);
+        const op_dey = increment_register("y", -1);
+
+        const BitwiseOp = enum { And, Or, Xor };
+        fn bitwise_op(comptime operation: BitwiseOp) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    const result = switch (operation) {
+                        .And => self.a & operand.value,
+                        .Or => self.a | operand.value,
+                        .Xor => self.a ^ operand.value,
+                    };
+                    self.status.zero = @bitCast(result == 0);
+                    self.status.negative = @bitCast(result & 0x80 != 0);
+                    self.a = result;
+                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+                }
+            }.op;
+        }
+        const op_and = bitwise_op(.And);
+        const op_ora = bitwise_op(.Or);
+        const op_eor = bitwise_op(.Xor);
+
+        fn op_bit(self: *Self, op_code: u8) u8 {
+            const operand = self.fetch_operand(op_table[op_code]).value;
+            const result = self.a & operand;
+            self.status.zero = @bitCast(result == 0);
+            self.status.overflow = @bitCast(operand & 0x40 != 0);
+            self.status.negative = @bitCast(operand & 0x80 != 0);
+
             return cycles(op_table[op_code]);
-        }
-        fn op_not_supported(_: *Self) void {
-            unreachable;
-        }
-
-        fn op_adc(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            var result, const carry1 = @addWithOverflow(self.a, operand.value);
-            result, const carry2 = @addWithOverflow(result, self.status.carry);
-
-            self.status.carry = carry1 | carry2;
-            self.status.zero = @bitCast(result == 0);
-            self.status.overflow = @bitCast((result ^ self.a) & (result ^ operand.value) & 0x80 != 0);
-            self.status.negative = @bitCast(result & 0x80 != 0);
-            self.a = result;
-
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
-        fn op_and(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            const result = self.a & operand.value;
-            self.status.zero = @bitCast(result == 0);
-            self.status.negative = @bitCast(result & 0x80 != 0);
-            self.a = result;
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
         }
 
         fn op_asl(self: *Self, op_code: u8) u8 {
@@ -376,182 +465,59 @@ pub fn Nes6502(
             return cycles(op_table[op_code]);
         }
 
-        fn relative_branch(self: *Self, jump: bool) u8 {
-            const operand = self.read_next_u8();
-            if (jump) {
-                const new_pc: u16 = @bitCast(@as(i16, @bitCast(self.pc)) +% @as(i8, @bitCast(operand)));
-                const page_crossed = (self.pc & 0xff00) != (new_pc & 0xff00);
+        fn branch(comptime flag: []const u8, comptime condition: u1) OpFn {
+            return struct {
+                fn op(self: *Self, _: u8) u8 {
+                    const offset = @as(i8, @bitCast(self.read_next_u8()));
+                    if (@field(self.status, flag) != condition) return 2;
 
-                if (builtin.is_test) {
-                    _ = read_u8(self.pc);
-                    if (page_crossed) {
-                        const new_pc_without_carry: u16 = (self.pc & 0xff00) + @as(u16, @bitCast(@as(i16, @bitCast(self.pc)) +% @as(i8, @bitCast(operand)) & 0x00ff));
-                        _ = read_u8(new_pc_without_carry);
+                    const new_pc: u16 = @bitCast(@as(i16, @bitCast(self.pc)) +% offset);
+                    const page_crossed = self.pc & 0xff00 != new_pc & 0xff00;
+                    if (builtin.is_test) {
+                        _ = read_u8(self.pc);
+                        if (page_crossed) {
+                            const new_pc_without_carry: u16 = (self.pc & 0xff00) | (new_pc & 0x00ff);
+                            _ = read_u8(new_pc_without_carry);
+                        }
                     }
+                    self.pc = new_pc;
+                    return @as(u8, 3) + @as(u1, @bitCast(page_crossed));
                 }
-
-                self.pc = new_pc;
-                return @as(u8, 3) + @as(u1, @bitCast(page_crossed));
-            }
-            return 2;
+            }.op;
         }
-
-        fn op_bcc(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.carry == 0);
-        }
-
-        fn op_bcs(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.carry == 1);
-        }
-
-        fn op_beq(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.zero == 1);
-        }
-
-        fn op_bmi(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.negative == 1);
-        }
-
-        fn op_bne(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.zero == 0);
-        }
-
-        fn op_bpl(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.negative == 0);
-        }
-
-        fn op_bvc(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.overflow == 0);
-        }
-
-        fn op_bvs(self: *Self, _: u8) u8 {
-            return self.relative_branch(self.status.overflow == 1);
-        }
+        const op_bcc = branch("carry", 0);
+        const op_bcs = branch("carry", 1);
+        const op_beq = branch("zero", 1);
+        const op_bne = branch("zero", 0);
+        const op_bpl = branch("negative", 0);
+        const op_bmi = branch("negative", 1);
+        const op_bvc = branch("overflow", 0);
+        const op_bvs = branch("overflow", 1);
 
         fn op_brk(self: *Self, op_code: u8) u8 {
             _ = read_u8(self.pc);
             self.push_u16(self.pc +% 1);
             self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
             self.pc = read_u16(0xfffe);
-            self.status.interruptDisable = 1;
+            self.status.interrupt_disable = 1;
             return cycles(op_table[op_code]);
         }
 
-        fn op_clc(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.carry = 0;
-            return cycles(op_table[op_code]);
+        fn compare(comptime register: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const value = @field(self, register);
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    self.status.carry = @bitCast(value >= operand.value);
+                    self.status.zero = @bitCast(value == operand.value);
+                    self.status.negative = @bitCast((value -% operand.value) & 0x80 != 0);
+                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+                }
+            }.op;
         }
-
-        fn op_cld(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.decimal = 0;
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_cli(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.interruptDisable = 0;
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_clv(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.overflow = 0;
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_cmp(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.status.carry = @bitCast(self.a >= operand.value);
-            self.status.zero = @bitCast(self.a == operand.value);
-            self.status.negative = @bitCast((self.a -% operand.value) & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
-        fn op_cpx(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            self.status.carry = @bitCast(self.x >= operand);
-            self.status.zero = @bitCast(self.x == operand);
-            self.status.negative = @bitCast((self.x -% operand) & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_cpy(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            self.status.carry = @bitCast(self.y >= operand);
-            self.status.zero = @bitCast(self.y == operand);
-            self.status.negative = @bitCast((self.y -% operand) & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_dec(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            const result = operand.value -% 1;
-            write_u8(operand.address.?, operand.value);
-            write_u8(operand.address.?, result);
-            self.status.zero = @bitCast(result == 0);
-            self.status.negative = @bitCast(result & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_inc(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            const result = operand.value +% 1;
-            write_u8(operand.address.?, operand.value);
-            write_u8(operand.address.?, result);
-            self.status.zero = @bitCast(result == 0);
-            self.status.negative = @bitCast(result & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_dex(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.x = self.x -% 1;
-            self.status.zero = @bitCast(self.x == 0);
-            self.status.negative = @bitCast(self.x & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_dey(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.y = self.y -% 1;
-            self.status.zero = @bitCast(self.y == 0);
-            self.status.negative = @bitCast(self.y & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_inx(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.x = self.x +% 1;
-            self.status.zero = @bitCast(self.x == 0);
-            self.status.negative = @bitCast(self.x & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_iny(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.y = self.y +% 1;
-            self.status.zero = @bitCast(self.y == 0);
-            self.status.negative = @bitCast(self.y & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_eor(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.a = self.a ^ operand.value;
-            self.status.zero = @bitCast(self.a == 0);
-            self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
-        fn op_ora(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.a = self.a | operand.value;
-            self.status.zero = @bitCast(self.a == 0);
-            self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
+        const op_cmp = compare("a");
+        const op_cpx = compare("x");
+        const op_cpy = compare("y");
 
         fn op_jmp(self: *Self, op_code: u8) u8 {
             const address = self.read_next_u16();
@@ -561,7 +527,7 @@ pub fn Nes6502(
 
         fn op_jmp_indirect(self: *Self, op_code: u8) u8 {
             const ptr = self.read_next_u16();
-            if (ptr & 0xff == 0xff) {
+            if (ptr & 0x00ff == 0x00ff) {
                 self.pc = @as(u16, read_u8(ptr)) | (@as(u16, read_u8(ptr & 0xff00)) << 8);
             } else {
                 self.pc = read_u16(ptr);
@@ -578,30 +544,6 @@ pub fn Nes6502(
             return cycles(op_table[op_code]);
         }
 
-        fn op_lda(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.a = operand.value;
-            self.status.zero = @bitCast(self.a == 0);
-            self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
-        fn op_ldx(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.x = operand.value;
-            self.status.zero = @bitCast(self.x == 0);
-            self.status.negative = @bitCast(self.x & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
-        fn op_ldy(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            self.y = operand.value;
-            self.status.zero = @bitCast(self.y == 0);
-            self.status.negative = @bitCast(self.y & 0x80 != 0);
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-        }
-
         fn op_lsr(self: *Self, op_code: u8) u8 {
             const operand = self.fetch_operand(op_table[op_code]);
             const result = operand.value >> 1;
@@ -615,16 +557,6 @@ pub fn Nes6502(
             self.status.carry = @bitCast(operand.value & 0x01 != 0);
             self.status.zero = @bitCast(result == 0);
             self.status.negative = 0;
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_bit(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]).value;
-            const result = self.a & operand;
-            self.status.zero = @bitCast(result == 0);
-            self.status.overflow = @bitCast(operand & 0x40 != 0);
-            self.status.negative = @bitCast(operand & 0x80 != 0);
-
             return cycles(op_table[op_code]);
         }
 
@@ -693,88 +625,76 @@ pub fn Nes6502(
             _ = read_u8(self.pc -% 1);
             return cycles(op_table[op_code]);
         }
-        fn op_sbc(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            var result, const carry1 = @addWithOverflow(self.a, ~operand.value);
-            result, const carry2 = @addWithOverflow(result, self.status.carry);
+        fn set_flag(comptime flag_name: []const u8, comptime value: u1) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    _ = read_u8(self.pc);
+                    @field(self.status, flag_name) = value;
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
+        }
+        const op_clc = set_flag("carry", 0);
+        const op_sec = set_flag("carry", 1);
+        const op_cli = set_flag("interrupt_disable", 0);
+        const op_sei = set_flag("interrupt_disable", 1);
+        const op_cld = set_flag("decimal", 0);
+        const op_sed = set_flag("decimal", 1);
+        const op_clv = set_flag("overflow", 0);
 
-            self.status.carry = carry1 | carry2;
-            self.status.zero = @bitCast(result == 0);
-            self.status.overflow = @bitCast((result ^ self.a) & (result ^ ~operand.value) & 0x80 != 0);
-            self.status.negative = @bitCast(result & 0x80 != 0);
+        fn store(comptime register: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    write_u8(operand.address.?, @field(self, register));
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
+        }
+        const op_sta = store("a");
+        const op_stx = store("x");
+        const op_sty = store("y");
 
-            self.a = result;
-            return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+        fn load(comptime register: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    @field(self, register) = operand.value;
+                    self.status.zero = @bitCast(@field(self, register) == 0);
+                    self.status.negative = @bitCast(@field(self, register) & 0x80 != 0);
+                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+                }
+            }.op;
         }
-        fn op_sec(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.carry = 1;
-            return cycles(op_table[op_code]);
+        const op_lda = load("a");
+        const op_ldx = load("x");
+        const op_ldy = load("y");
+
+        fn transfer(comptime register_from: []const u8, comptime register_to: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    _ = read_u8(self.pc);
+                    @field(self, register_to) = @field(self, register_from);
+                    self.status.zero = @bitCast(@field(self, register_to) == 0);
+                    self.status.negative = @bitCast(@field(self, register_to) & 0x80 != 0);
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
         }
-        fn op_sed(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.decimal = 1;
-            return cycles(op_table[op_code]);
-        }
-        fn op_sei(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status.interruptDisable = 1;
-            return cycles(op_table[op_code]);
-        }
-        fn op_sta(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            write_u8(operand.address.?, self.a);
-            return cycles(op_table[op_code]);
-        }
-        fn op_stx(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            write_u8(operand.address.?, self.x);
-            return cycles(op_table[op_code]);
-        }
-        fn op_sty(self: *Self, op_code: u8) u8 {
-            const operand = self.fetch_operand(op_table[op_code]);
-            write_u8(operand.address.?, self.y);
-            return cycles(op_table[op_code]);
-        }
-        fn op_tax(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.x = self.a;
-            self.status.zero = @bitCast(self.x == 0);
-            self.status.negative = @bitCast(self.x & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-        fn op_tay(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.y = self.a;
-            self.status.zero = @bitCast(self.y == 0);
-            self.status.negative = @bitCast(self.y & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-        fn op_tsx(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.x = self.s;
-            self.status.zero = @bitCast(self.x == 0);
-            self.status.negative = @bitCast(self.x & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
-        fn op_txa(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.a = self.x;
-            self.status.zero = @bitCast(self.a == 0);
-            self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]);
-        }
+        const op_tax = transfer("a", "x");
+        const op_tay = transfer("a", "y");
+        const op_tsx = transfer("s", "x");
+        const op_txa = transfer("x", "a");
+        const op_tya = transfer("y", "a");
+
         fn op_txs(self: *Self, op_code: u8) u8 {
             _ = read_u8(self.pc);
             self.s = self.x;
             return cycles(op_table[op_code]);
         }
-        fn op_tya(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.a = self.y;
-            self.status.zero = @bitCast(self.a == 0);
-            self.status.negative = @bitCast(self.a & 0x80 != 0);
-            return cycles(op_table[op_code]);
+
+        fn op_stp(_: *Self, _: u8) u8 {
+            @panic("CPU halt.");
         }
 
         inline fn push_u8(self: *Self, value: u8) void {
@@ -861,7 +781,7 @@ pub fn Nes6502(
             const lo = @as(u16, self.read_next_u8());
             const hi = @as(u16, self.read_next_u8()) << 8;
             const address = (hi | lo) +% self.x;
-            const address_without_carry = hi + ((lo + self.x) & 0x00ff);
+            const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -872,7 +792,7 @@ pub fn Nes6502(
             const lo = @as(u16, self.read_next_u8());
             const hi = @as(u16, self.read_next_u8()) << 8;
             const address = (hi | lo) +% self.x;
-            const address_without_carry = hi + ((lo + self.x) & 0x00ff);
+            const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -885,7 +805,7 @@ pub fn Nes6502(
             const lo = @as(u16, self.read_next_u8());
             const hi = @as(u16, self.read_next_u8()) << 8;
             const address = (hi | lo) +% self.y;
-            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -896,7 +816,7 @@ pub fn Nes6502(
             const lo = @as(u16, self.read_next_u8());
             const hi = @as(u16, self.read_next_u8()) << 8;
             const address = (hi | lo) +% self.y;
-            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -927,7 +847,7 @@ pub fn Nes6502(
             const lo = @as(u16, read_u8(base_index));
             const hi = @as(u16, read_u8(base_index +% 1)) << 8;
             const address = (hi | lo) +% self.y;
-            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -939,7 +859,7 @@ pub fn Nes6502(
             const lo = @as(u16, read_u8(base_index));
             const hi = @as(u16, read_u8(base_index +% 1)) << 8;
             const address = (hi | lo) +% self.y;
-            const address_without_carry = hi + ((lo + self.y) & 0x00ff);
+            const address_without_carry = hi + (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
                 _ = read_u8(address_without_carry);
@@ -954,196 +874,6 @@ pub fn Nes6502(
 ////////////////////////////////////////////////////////////////////////////////
 /// Tests
 ////////////////////////////////////////////////////////////////////////////////
-const supported_ops = [_]struct { u8, bool }{
-    .{ 0xaa, true },
-    .{ 0xa8, true },
-    .{ 0xba, true },
-    .{ 0x8a, true },
-    .{ 0x9a, true },
-    .{ 0x98, true },
-
-    .{ 0x84, true },
-    .{ 0x94, true },
-    .{ 0x8c, true },
-
-    .{ 0x86, true },
-    .{ 0x96, true },
-    .{ 0x8e, true },
-
-    .{ 0x85, true },
-    .{ 0x95, true },
-    .{ 0x8d, true },
-    .{ 0x9d, true },
-    .{ 0x99, true },
-    .{ 0x81, true },
-    .{ 0x91, true },
-
-    .{ 0x78, true },
-    .{ 0xf8, true },
-    .{ 0x38, true },
-
-    .{ 0xe9, true },
-    .{ 0xe5, true },
-    .{ 0xf5, true },
-    .{ 0xed, true },
-    .{ 0xfd, true },
-    .{ 0xf9, true },
-    .{ 0xe1, true },
-    .{ 0xf1, true },
-
-    .{ 0x60, true },
-    .{ 0x40, true },
-
-    .{ 0x6a, true },
-    .{ 0x66, true },
-    .{ 0x76, true },
-    .{ 0x6e, true },
-    // FIXME: check why there is a double read?
-    .{ 0x7e, false },
-
-    .{ 0x2a, true },
-    .{ 0x26, true },
-    .{ 0x36, true },
-    .{ 0x2e, true },
-    // FIXME: check why there is a double read?
-    .{ 0x3e, false },
-
-    .{ 0x28, true },
-    .{ 0x68, true },
-    .{ 0x08, true },
-    .{ 0x48, true },
-
-    .{ 0x09, true },
-    .{ 0x05, true },
-    .{ 0x15, true },
-    .{ 0x0d, true },
-    .{ 0x1d, true },
-    .{ 0x19, true },
-    .{ 0x01, true },
-    .{ 0x11, true },
-
-    .{ 0xea, true },
-
-    .{ 0x4a, true },
-    .{ 0x46, true },
-    .{ 0x56, true },
-    .{ 0x4e, true },
-    // FIXME: check why there is a double read?
-    .{ 0x5e, false },
-
-    .{ 0xa0, true },
-    .{ 0xa4, true },
-    .{ 0xb4, true },
-    .{ 0xac, true },
-    .{ 0xbc, true },
-
-    .{ 0xa2, true },
-    .{ 0xa6, true },
-    .{ 0xb6, true },
-    .{ 0xae, true },
-    .{ 0xbe, true },
-
-    .{ 0xa9, true },
-    .{ 0xa5, true },
-    .{ 0xb5, true },
-    .{ 0xad, true },
-    .{ 0xbd, true },
-    .{ 0xb9, true },
-    .{ 0xa1, true },
-    .{ 0xb1, true },
-
-    .{ 0x20, true },
-    .{ 0x4c, true },
-    .{ 0x6c, true },
-
-    .{ 0xe8, true },
-    .{ 0xc8, true },
-
-    .{ 0x49, true },
-    .{ 0x45, true },
-    .{ 0x55, true },
-    .{ 0x4d, true },
-    .{ 0x5d, true },
-    .{ 0x59, true },
-    .{ 0x41, true },
-    .{ 0x51, true },
-
-    .{ 0x88, true },
-    .{ 0xca, true },
-
-    .{ 0xe6, true },
-    .{ 0xf6, true },
-    .{ 0xee, true },
-    // FIXME: check why there is a double read?
-    .{ 0xfe, false },
-
-    .{ 0xc6, true },
-    .{ 0xd6, true },
-    .{ 0xce, true },
-    // FIXME: check why there is a double read?
-    .{ 0xde, false },
-
-    .{ 0xc0, true },
-    .{ 0xc4, true },
-    .{ 0xcc, true },
-
-    .{ 0xe0, true },
-    .{ 0xe4, true },
-    .{ 0xec, true },
-
-    .{ 0xc9, true },
-    .{ 0xc5, true },
-    .{ 0xd5, true },
-    .{ 0xcd, true },
-    .{ 0xdd, true },
-    .{ 0xd9, true },
-    .{ 0xc1, true },
-    .{ 0xd1, true },
-
-    .{ 0xb8, true },
-    .{ 0x58, true },
-    .{ 0xd8, true },
-    .{ 0x18, true },
-
-    .{ 0x00, true },
-    .{ 0x2c, true },
-    .{ 0x24, true },
-
-    .{ 0x70, true },
-    .{ 0x50, true },
-    .{ 0x10, true },
-    .{ 0xd0, true },
-    .{ 0x30, true },
-    .{ 0xf0, true },
-    .{ 0xb0, true },
-    .{ 0x90, true },
-
-    // FIXME: check why there is a double read?
-    .{ 0x1e, false },
-    .{ 0x0e, true },
-    .{ 0x16, true },
-    .{ 0x06, true },
-    .{ 0x0a, true },
-
-    .{ 0x31, true },
-    .{ 0x21, true },
-    .{ 0x39, true },
-    .{ 0x3d, true },
-    .{ 0x2d, true },
-    .{ 0x35, true },
-    .{ 0x25, true },
-    .{ 0x29, true },
-
-    .{ 0x69, true },
-    .{ 0x65, true },
-    .{ 0x75, true },
-    .{ 0x6d, true },
-    .{ 0x7d, true },
-    .{ 0x79, true },
-    .{ 0x61, true },
-    .{ 0x71, true },
-};
-
 const TestCase = struct {
     name: []u8,
     initial: CpuState,
@@ -1167,7 +897,7 @@ const CpuState = struct {
     ram: []struct { u16, u8 },
 };
 
-fn loadTestSuite(file_buffer: []u8, allocator: Allocator, dir: std.fs.Dir, op: u8) !std.json.Parsed([]TestCase) {
+fn loadTestSuite(file_buffer: []u8, allocator: Allocator, dir: std.fs.Dir, op: usize) !std.json.Parsed([]TestCase) {
     var file = blk: {
         var buf: [10]u8 = undefined;
         const filename = try std.fmt.bufPrint(&buf, "{x:02}.json", .{op});
@@ -1206,10 +936,9 @@ test "nes6502 test suite" {
 
     test_memory = try allocator.alloc(u8, 1 << 16);
     bus_events = try std.ArrayList(BusEvent).initCapacity(allocator, 32);
-    const file_buffer = try allocator.alloc(u8, 10 * (2 << 20)); // 10
+    const file_buffer = try allocator.alloc(u8, 10 * (2 << 20)); // 10Mb
 
     const Cpu = Nes6502(test_read_u8, test_read_u16, test_write_u8);
-    Cpu.init();
     const expectCpuState = struct {
         fn call(expected: CpuState, cpu: Cpu) !void {
             try std.testing.expectEqual(cpu.status, @as(StatusFlags, @bitCast(expected.p)));
@@ -1234,11 +963,21 @@ test "nes6502 test suite" {
     }.call;
 
     const dir = try std.fs.cwd().openDir("65x02/nes6502/v1", .{ .iterate = true });
-    for (supported_ops) |supported_op| {
-        const op, const check_cycles = supported_op;
+    for (0..256) |op_code| {
+        var check_cycles = true;
+        if (std.meta.eql(Cpu.op_table[op_code], Cpu.not_supported)) {
+            std.debug.print("FIXME: Skipping unsuppored operation 0x{X:02}\n", .{op_code});
+            continue;
+        } else if (std.meta.eql(Cpu.op_table[op_code], Cpu.stp)) {
+            std.debug.print("Skipping STP operation 0x{X:02}\n", .{op_code});
+            continue;
+        } else if (op_code == 0x1e or op_code == 0x3e or op_code == 0x5e or op_code == 0x7e or op_code == 0xde or op_code == 0xfe) {
+            std.debug.print("FIXME: Disabling cycle checks for operation 0x{X:02}\n", .{op_code});
+            check_cycles = false;
+        }
 
-        std.debug.print("Running test suite for operation: {x:02}\n", .{op});
-        const test_suite = try loadTestSuite(file_buffer, allocator, dir, op);
+        std.debug.print("Running test suite for operation 0x{X:02}\n", .{op_code});
+        const test_suite = try loadTestSuite(file_buffer, allocator, dir, op_code);
         defer test_suite.deinit();
 
         for (test_suite.value, 0..) |testCase, index| {
@@ -1265,11 +1004,11 @@ test "nes6502 test suite" {
                     std.debug.print("Unexpected bus events for test case #{d}: {s}\n", .{ index, testCase.name });
                     std.debug.print("Expected bus events:\n", .{});
                     for (testCase.cycles) |event| {
-                        std.debug.print("{s} @{x:04} => {x:02}\n", .{ event.@"2", event.@"0", event.@"1" });
+                        std.debug.print("{s} @{X:04} => {X:02}\n", .{ event.@"2", event.@"0", event.@"1" });
                     }
                     std.debug.print("Actual bus events:\n", .{});
                     for (bus_events.items) |event| {
-                        std.debug.print("{s} @{x:04} => {x:02}\n", .{ event.@"2", event.@"0", event.@"1" });
+                        std.debug.print("{s} @{X:04} => {X:02}\n", .{ event.@"2", event.@"0", event.@"1" });
                     }
                     return err;
                 };
@@ -1277,16 +1016,16 @@ test "nes6502 test suite" {
             expectCpuState(expected, cpu) catch |err| {
                 std.debug.print("Unexpected CPU state for test case #{d}: {s}\n", .{ index, testCase.name });
                 std.debug.print("\tExpected\tActual\n", .{});
-                std.debug.print("PC\t{x:04}\t\t{x:04}\n", .{ expected.pc, cpu.pc });
-                std.debug.print("a\t{x:02}\t\t{x:02}\n", .{ expected.a, cpu.a });
-                std.debug.print("x\t{x:02}\t\t{x:02}\n", .{ expected.x, cpu.x });
-                std.debug.print("y\t{x:02}\t\t{x:02}\n", .{ expected.y, cpu.y });
-                std.debug.print("s\t{x:02}\t\t{x:02}\n", .{ expected.s, cpu.s });
-                std.debug.print("p\t{x:02}\t\t{x:02}\n", .{ expected.p, @as(u8, @bitCast(cpu.status)) });
+                std.debug.print("PC\t{X:04}\t\t{X:04}\n", .{ expected.pc, cpu.pc });
+                std.debug.print("a\t{X:02}\t\t{X:02}\n", .{ expected.a, cpu.a });
+                std.debug.print("x\t{X:02}\t\t{X:02}\n", .{ expected.x, cpu.x });
+                std.debug.print("y\t{X:02}\t\t{X:02}\n", .{ expected.y, cpu.y });
+                std.debug.print("s\t{X:02}\t\t{X:02}\n", .{ expected.s, cpu.s });
+                std.debug.print("p\t{X:02}\t\t{X:02}\n", .{ expected.p, @as(u8, @bitCast(cpu.status)) });
                 const expected_status: StatusFlags = @bitCast(expected.p);
                 std.debug.print("carry\t{d}\t\t{d}\n", .{ expected_status.carry, cpu.status.carry });
                 std.debug.print("zero\t{d}\t\t{d}\n", .{ expected_status.zero, cpu.status.zero });
-                std.debug.print("int\t{d}\t\t{d}\n", .{ expected_status.interruptDisable, cpu.status.interruptDisable });
+                std.debug.print("int\t{d}\t\t{d}\n", .{ expected_status.interrupt_disable, cpu.status.interrupt_disable });
                 std.debug.print("dec\t{d}\t\t{d}\n", .{ expected_status.decimal, cpu.status.decimal });
                 std.debug.print("b\t{d}\t\t{d}\n", .{ expected_status.b, cpu.status.b });
                 std.debug.print("overfl\t{d}\t\t{d}\n", .{ expected_status.overflow, cpu.status.overflow });
@@ -1299,7 +1038,7 @@ test "nes6502 test suite" {
                 for (expected.ram) |entry| {
                     const address, const value = entry;
                     const actual = test_memory[address];
-                    std.debug.print("{s}{x:04}\t{x:02}\t\t{x:02}\n", .{ if (actual != value) "*" else " ", address, value, actual });
+                    std.debug.print("{s}{X:04}\t{X:02}\t\t{X:02}\n", .{ if (actual != value) "*" else " ", address, value, actual });
                 }
                 return err;
             };
