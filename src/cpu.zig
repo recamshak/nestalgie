@@ -32,7 +32,7 @@ pub fn Nes6502(
             page_crossed: bool = false,
         };
 
-        pc: u16 = 0xFFFC,
+        pc: u16 = read_u16(0xFFFC),
         a: u8 = 0,
         x: u8 = 0,
         y: u8 = 0,
@@ -346,6 +346,7 @@ pub fn Nes6502(
         }
 
         pub fn execute_next_op(self: *Self) u8 {
+            // TODO: IRQ & NMI
             const op_code = self.read_next_u8();
             const op = op_table[op_code];
             return self.execute(op, op_code);
@@ -727,6 +728,8 @@ pub fn Nes6502(
         inline fn execute(self: *Self, op: Operation, op_code: u8) u8 {
             return op.@"0"(self, op_code);
         }
+
+        // TODO: clean this mess
         fn @"accumulator mode"(self: *Self) Operand {
             _ = read_u8(self.pc);
             return .{ .value = self.a };
