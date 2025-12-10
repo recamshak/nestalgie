@@ -360,11 +360,44 @@ pub fn Nes6502(
                 return cycles(op_table[op_code]);
             }
         }
+
         fn op_not_supported(_: *Self, op_code: u8) u8 {
             var buf: [2]u8 = undefined;
             _ = std.fmt.bufPrint(&buf, "{X:02}", .{op_code}) catch unreachable;
             @panic("Operation not supported: 0x" ++ buf);
         }
+
+        fn op_stp(_: *Self, _: u8) u8 {
+            @panic("CPU halt.");
+        }
+
+        fn load(comptime register: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    @field(self, register) = operand.value;
+                    self.status.zero = @bitCast(@field(self, register) == 0);
+                    self.status.negative = @bitCast(@field(self, register) & 0x80 != 0);
+                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
+                }
+            }.op;
+        }
+        const op_lda = load("a");
+        const op_ldx = load("x");
+        const op_ldy = load("y");
+
+        fn store(comptime register: []const u8) OpFn {
+            return struct {
+                fn op(self: *Self, op_code: u8) u8 {
+                    const operand = self.fetch_operand(op_table[op_code]);
+                    write_u8(operand.address.?, @field(self, register));
+                    return cycles(op_table[op_code]);
+                }
+            }.op;
+        }
+        const op_sta = store("a");
+        const op_stx = store("x");
+        const op_sty = store("y");
 
         fn add_with_carry(comptime invert: bool) OpFn {
             return struct {
@@ -472,7 +505,7 @@ pub fn Nes6502(
                     if (@field(self.status, flag) != condition) return 2;
 
                     const new_pc: u16 = @bitCast(@as(i16, @bitCast(self.pc)) +% offset);
-                    const page_crossed = self.pc & 0xff00 != new_pc & 0xff00;
+                    const page_crossed = self.pc ^ new_pc & 0xff00 != 0;
                     if (builtin.is_test) {
                         _ = read_u8(self.pc);
                         if (page_crossed) {
@@ -493,15 +526,6 @@ pub fn Nes6502(
         const op_bmi = branch("negative", 1);
         const op_bvc = branch("overflow", 0);
         const op_bvs = branch("overflow", 1);
-
-        fn op_brk(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.push_u16(self.pc +% 1);
-            self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
-            self.pc = read_u16(0xfffe);
-            self.status.interrupt_disable = 1;
-            return cycles(op_table[op_code]);
-        }
 
         fn compare(comptime register: []const u8) OpFn {
             return struct {
@@ -541,6 +565,27 @@ pub fn Nes6502(
             self.push_u16(self.pc);
             const address_hi = @as(u16, self.read_next_u8());
             self.pc = (address_hi << 8) | address_lo;
+            return cycles(op_table[op_code]);
+        }
+        fn op_rts(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            _ = read_u8(0x0100 +% @as(u16, self.s));
+            self.pc = self.pull_u16() +% 1;
+            _ = read_u8(self.pc -% 1);
+            return cycles(op_table[op_code]);
+        }
+        fn op_rti(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.status = @bitCast((@as(u8, @bitCast(self.status)) & 0x30) | (self.pull_u8() & 0xcf));
+            self.pc = self.pull_u16();
+            return cycles(op_table[op_code]);
+        }
+        fn op_brk(self: *Self, op_code: u8) u8 {
+            _ = read_u8(self.pc);
+            self.push_u16(self.pc +% 1);
+            self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
+            self.pc = read_u16(0xfffe);
+            self.status.interrupt_disable = 1;
             return cycles(op_table[op_code]);
         }
 
@@ -612,19 +657,6 @@ pub fn Nes6502(
             self.status.negative = @bitCast(result & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
-        fn op_rti(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.status = @bitCast((@as(u8, @bitCast(self.status)) & 0x30) | (self.pull_u8() & 0xcf));
-            self.pc = self.pull_u16();
-            return cycles(op_table[op_code]);
-        }
-        fn op_rts(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            _ = read_u8(0x0100 +% @as(u16, self.s));
-            self.pc = self.pull_u16() +% 1;
-            _ = read_u8(self.pc -% 1);
-            return cycles(op_table[op_code]);
-        }
         fn set_flag(comptime flag_name: []const u8, comptime value: u1) OpFn {
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
@@ -642,60 +674,25 @@ pub fn Nes6502(
         const op_sed = set_flag("decimal", 1);
         const op_clv = set_flag("overflow", 0);
 
-        fn store(comptime register: []const u8) OpFn {
-            return struct {
-                fn op(self: *Self, op_code: u8) u8 {
-                    const operand = self.fetch_operand(op_table[op_code]);
-                    write_u8(operand.address.?, @field(self, register));
-                    return cycles(op_table[op_code]);
-                }
-            }.op;
-        }
-        const op_sta = store("a");
-        const op_stx = store("x");
-        const op_sty = store("y");
-
-        fn load(comptime register: []const u8) OpFn {
-            return struct {
-                fn op(self: *Self, op_code: u8) u8 {
-                    const operand = self.fetch_operand(op_table[op_code]);
-                    @field(self, register) = operand.value;
-                    self.status.zero = @bitCast(@field(self, register) == 0);
-                    self.status.negative = @bitCast(@field(self, register) & 0x80 != 0);
-                    return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
-                }
-            }.op;
-        }
-        const op_lda = load("a");
-        const op_ldx = load("x");
-        const op_ldy = load("y");
-
-        fn transfer(comptime register_from: []const u8, comptime register_to: []const u8) OpFn {
+        fn transfer(comptime register_from: []const u8, comptime register_to: []const u8, comptime update_status: bool) OpFn {
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
                     _ = read_u8(self.pc);
                     @field(self, register_to) = @field(self, register_from);
-                    self.status.zero = @bitCast(@field(self, register_to) == 0);
-                    self.status.negative = @bitCast(@field(self, register_to) & 0x80 != 0);
+                    if (update_status) {
+                        self.status.zero = @bitCast(@field(self, register_to) == 0);
+                        self.status.negative = @bitCast(@field(self, register_to) & 0x80 != 0);
+                    }
                     return cycles(op_table[op_code]);
                 }
             }.op;
         }
-        const op_tax = transfer("a", "x");
-        const op_tay = transfer("a", "y");
-        const op_tsx = transfer("s", "x");
-        const op_txa = transfer("x", "a");
-        const op_tya = transfer("y", "a");
-
-        fn op_txs(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            self.s = self.x;
-            return cycles(op_table[op_code]);
-        }
-
-        fn op_stp(_: *Self, _: u8) u8 {
-            @panic("CPU halt.");
-        }
+        const op_tax = transfer("a", "x", true);
+        const op_tay = transfer("a", "y", true);
+        const op_tsx = transfer("s", "x", true);
+        const op_txs = transfer("x", "s", false);
+        const op_txa = transfer("x", "a", true);
+        const op_tya = transfer("y", "a", true);
 
         inline fn push_u8(self: *Self, value: u8) void {
             write_u8(0x0100 +% @as(u16, self.s), value);
