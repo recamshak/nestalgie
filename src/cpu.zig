@@ -13,11 +13,7 @@ const StatusFlags = packed struct(u8) {
     negative: u1 = 0,
 };
 
-pub fn Nes6502(
-    comptime read_u8: *const fn (address: u16) callconv(.@"inline") u8,
-    comptime read_u16: *const fn (address: u16) callconv(.@"inline") u16,
-    comptime write_u8: *const fn (address: u16, value: u8) callconv(.@"inline") void,
-) type {
+pub fn Nes6502(comptime Bus: type) type {
     return struct {
         const Self = @This();
         const OpFn = fn (self: *Self, op_code: u8) u8;
@@ -32,7 +28,8 @@ pub fn Nes6502(
             page_crossed: bool = false,
         };
 
-        pc: u16 = read_u16(0xFFFC),
+        bus: *Bus,
+        pc: u16 = 0,
         a: u8 = 0,
         x: u8 = 0,
         y: u8 = 0,
@@ -335,20 +332,35 @@ pub fn Nes6502(
             not_supported,
         };
 
+        inline fn write_u8(self: *Self, address: u16, value: u8) void {
+            return self.bus.write_u8(address, value);
+        }
+
+        inline fn read_u8(self: *Self, address: u16) u8 {
+            return self.bus.read_u8(address);
+        }
+
+        inline fn read_u16(self: *Self, address: u16) u16 {
+            const lo = self.read_u8(address);
+            const hi = self.read_u8(address +% 1);
+            return (@as(u16, hi) << 8) | lo;
+        }
+
         inline fn read_next_u8(self: *Self) u8 {
             defer self.pc +%= 1;
-            return read_u8(self.pc);
+            return self.read_u8(self.pc);
         }
 
         inline fn read_next_u16(self: *Self) u16 {
             defer self.pc +%= 2;
-            return read_u16(self.pc);
+            return self.read_u16(self.pc);
         }
 
         pub fn execute_next_op(self: *Self) u8 {
             // TODO: IRQ & NMI
             const op_code = self.read_next_u8();
             const op = op_table[op_code];
+            std.log.info("execute op {X:02} @{X:04}", .{ op_code, self.pc -% 1 });
             return self.execute(op, op_code);
         }
 
@@ -357,7 +369,7 @@ pub fn Nes6502(
                 const operand = self.fetch_operand(op_table[op_code]);
                 return cycles(op_table[op_code]) + @as(u1, @bitCast(operand.page_crossed));
             } else {
-                _ = read_u8(self.pc);
+                _ = self.read_u8(self.pc);
                 return cycles(op_table[op_code]);
             }
         }
@@ -391,7 +403,7 @@ pub fn Nes6502(
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
                     const operand = self.fetch_operand(op_table[op_code]);
-                    write_u8(operand.address.?, @field(self, register));
+                    self.write_u8(operand.address.?, @field(self, register));
                     return cycles(op_table[op_code]);
                 }
             }.op;
@@ -426,8 +438,8 @@ pub fn Nes6502(
                 fn op(self: *Self, op_code: u8) u8 {
                     const operand = self.fetch_operand(op_table[op_code]);
                     const result = if (amount >= 0) operand.value +% amount else operand.value -% (-amount);
-                    write_u8(operand.address.?, operand.value);
-                    write_u8(operand.address.?, result);
+                    self.write_u8(operand.address.?, operand.value);
+                    self.write_u8(operand.address.?, result);
                     self.status.zero = @bitCast(result == 0);
                     self.status.negative = @bitCast(result & 0x80 != 0);
                     return cycles(op_table[op_code]);
@@ -437,7 +449,7 @@ pub fn Nes6502(
         fn increment_register(comptime register: []const u8, comptime amount: i3) OpFn {
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
-                    _ = read_u8(self.pc);
+                    _ = self.read_u8(self.pc);
                     const result = if (amount >= 0) @field(self, register) +% amount else @field(self, register) -% (-amount);
                     @field(self, register) = result;
                     self.status.zero = @bitCast(result == 0);
@@ -488,8 +500,8 @@ pub fn Nes6502(
             const operand = self.fetch_operand(op_table[op_code]);
             const result, const carry = @shlWithOverflow(operand.value, 1);
             if (operand.address) |address| {
-                write_u8(address, operand.value);
-                write_u8(address, result);
+                self.write_u8(address, operand.value);
+                self.write_u8(address, result);
             } else {
                 self.a = result;
             }
@@ -508,10 +520,10 @@ pub fn Nes6502(
                     const new_pc: u16 = @bitCast(@as(i16, @bitCast(self.pc)) +% offset);
                     const page_crossed = self.pc ^ new_pc & 0xff00 != 0;
                     if (builtin.is_test) {
-                        _ = read_u8(self.pc);
+                        _ = self.read_u8(self.pc);
                         if (page_crossed) {
                             const new_pc_without_carry: u16 = (self.pc & 0xff00) | (new_pc & 0x00ff);
-                            _ = read_u8(new_pc_without_carry);
+                            _ = self.read_u8(new_pc_without_carry);
                         }
                     }
                     self.pc = new_pc;
@@ -553,9 +565,9 @@ pub fn Nes6502(
         fn op_jmp_indirect(self: *Self, op_code: u8) u8 {
             const ptr = self.read_next_u16();
             if (ptr & 0x00ff == 0x00ff) {
-                self.pc = @as(u16, read_u8(ptr)) | (@as(u16, read_u8(ptr & 0xff00)) << 8);
+                self.pc = @as(u16, self.read_u8(ptr)) | (@as(u16, self.read_u8(ptr & 0xff00)) << 8);
             } else {
-                self.pc = read_u16(ptr);
+                self.pc = self.read_u16(ptr);
             }
             return cycles(op_table[op_code]);
         }
@@ -569,23 +581,23 @@ pub fn Nes6502(
             return cycles(op_table[op_code]);
         }
         fn op_rts(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
-            _ = read_u8(0x0100 +% @as(u16, self.s));
+            _ = self.read_u8(self.pc);
+            _ = self.read_u8(0x0100 +% @as(u16, self.s));
             self.pc = self.pull_u16() +% 1;
-            _ = read_u8(self.pc -% 1);
+            _ = self.read_u8(self.pc -% 1);
             return cycles(op_table[op_code]);
         }
         fn op_rti(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             self.status = @bitCast((@as(u8, @bitCast(self.status)) & 0x30) | (self.pull_u8() & 0xcf));
             self.pc = self.pull_u16();
             return cycles(op_table[op_code]);
         }
         fn op_brk(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             self.push_u16(self.pc +% 1);
             self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
-            self.pc = read_u16(0xfffe);
+            self.pc = self.read_u16(0xfffe);
             self.status.interrupt_disable = 1;
             return cycles(op_table[op_code]);
         }
@@ -594,8 +606,8 @@ pub fn Nes6502(
             const operand = self.fetch_operand(op_table[op_code]);
             const result = operand.value >> 1;
             if (operand.address) |address| {
-                write_u8(address, operand.value);
-                write_u8(address, result);
+                self.write_u8(address, operand.value);
+                self.write_u8(address, result);
             } else {
                 self.a = result;
             }
@@ -607,24 +619,24 @@ pub fn Nes6502(
         }
 
         fn op_pha(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             self.push_u8(self.a);
             return cycles(op_table[op_code]);
         }
         fn op_php(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             self.push_u8(@as(u8, @bitCast(self.status)) | 0x30);
             return cycles(op_table[op_code]);
         }
         fn op_pla(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             self.a = self.pull_u8();
             self.status.zero = @bitCast(self.a == 0);
             self.status.negative = @bitCast(self.a & 0x80 != 0);
             return cycles(op_table[op_code]);
         }
         fn op_plp(self: *Self, op_code: u8) u8 {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             const b = self.status.b;
             self.status = @bitCast(self.pull_u8() | 0x20);
             self.status.b = b;
@@ -634,8 +646,8 @@ pub fn Nes6502(
             const operand = self.fetch_operand(op_table[op_code]);
             const result = operand.value << 1 | @as(u8, self.status.carry);
             if (operand.address) |address| {
-                write_u8(address, operand.value);
-                write_u8(address, result);
+                self.write_u8(address, operand.value);
+                self.write_u8(address, result);
             } else {
                 self.a = result;
             }
@@ -648,8 +660,8 @@ pub fn Nes6502(
             const operand = self.fetch_operand(op_table[op_code]);
             const result = operand.value >> 1 | (@as(u8, self.status.carry) << 7);
             if (operand.address) |address| {
-                write_u8(address, operand.value);
-                write_u8(address, result);
+                self.write_u8(address, operand.value);
+                self.write_u8(address, result);
             } else {
                 self.a = result;
             }
@@ -661,7 +673,7 @@ pub fn Nes6502(
         fn set_flag(comptime flag_name: []const u8, comptime value: u1) OpFn {
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
-                    _ = read_u8(self.pc);
+                    _ = self.read_u8(self.pc);
                     @field(self.status, flag_name) = value;
                     return cycles(op_table[op_code]);
                 }
@@ -678,7 +690,7 @@ pub fn Nes6502(
         fn transfer(comptime register_from: []const u8, comptime register_to: []const u8, comptime update_status: bool) OpFn {
             return struct {
                 fn op(self: *Self, op_code: u8) u8 {
-                    _ = read_u8(self.pc);
+                    _ = self.read_u8(self.pc);
                     @field(self, register_to) = @field(self, register_from);
                     if (update_status) {
                         self.status.zero = @bitCast(@field(self, register_to) == 0);
@@ -696,7 +708,7 @@ pub fn Nes6502(
         const op_tya = transfer("y", "a", true);
 
         inline fn push_u8(self: *Self, value: u8) void {
-            write_u8(0x0100 +% @as(u16, self.s), value);
+            self.write_u8(0x0100 +% @as(u16, self.s), value);
             self.s -%= 1;
         }
         inline fn push_u16(self: *Self, value: u16) void {
@@ -704,19 +716,19 @@ pub fn Nes6502(
             self.push_u8(@truncate(value & 0x00ff));
         }
         inline fn pull_u8(self: *Self) u8 {
-            _ = read_u8(0x0100 +% @as(u16, self.s));
+            _ = self.read_u8(0x0100 +% @as(u16, self.s));
             self.s +%= 1;
-            return read_u8(0x0100 +% @as(u16, self.s));
+            return self.read_u8(0x0100 +% @as(u16, self.s));
         }
         inline fn pull_u16(self: *Self) u16 {
             self.s +%= 1;
-            const lo = @as(u16, read_u8(0x0100 +% @as(u16, self.s)));
+            const lo = @as(u16, self.read_u8(0x0100 +% @as(u16, self.s)));
             self.s +%= 1;
-            const hi = @as(u16, read_u8(0x0100 +% @as(u16, self.s)));
+            const hi = @as(u16, self.read_u8(0x0100 +% @as(u16, self.s)));
             return hi << 8 | lo;
         }
         inline fn read_stack_u8(self: *Self) u8 {
-            return read_u8(0x0100 +% @as(u16, self.s));
+            return self.read_u8(0x0100 +% @as(u16, self.s));
         }
 
         inline fn fetch_operand(self: *Self, op: Operation) Operand {
@@ -731,7 +743,7 @@ pub fn Nes6502(
 
         // TODO: clean this mess
         fn @"accumulator mode"(self: *Self) Operand {
-            _ = read_u8(self.pc);
+            _ = self.read_u8(self.pc);
             return .{ .value = self.a };
         }
         fn @"#immediate mode"(self: *Self) Operand {
@@ -739,7 +751,7 @@ pub fn Nes6502(
         }
         fn @"zero page mode"(self: *Self) Operand {
             const address = self.read_next_u8();
-            return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = false };
         }
         fn @"zero page mode: write"(self: *Self) Operand {
             const address = self.read_next_u8();
@@ -747,31 +759,31 @@ pub fn Nes6502(
         }
         fn @"zero page,x mode"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
+            _ = self.read_u8(index);
             const address = index +% self.x;
-            return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = false };
         }
         fn @"zero page,x mode: write"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
+            _ = self.read_u8(index);
             const address = index +% self.x;
             return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"zero page,y mode"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
+            _ = self.read_u8(index);
             const address = index +% self.y;
-            return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = false };
         }
         fn @"zero page,y mode: write"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
+            _ = self.read_u8(index);
             const address = index +% self.y;
             return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"absolute mode"(self: *Self) Operand {
             const address = self.read_next_u16();
-            return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = false };
         }
         fn @"absolute mode: write"(self: *Self) Operand {
             const address = self.read_next_u16();
@@ -784,9 +796,9 @@ pub fn Nes6502(
             const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             }
-            return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = page_crossed };
         }
         fn @"absolute,x mode: write"(self: *Self) Operand {
             const lo = @as(u16, self.read_next_u8());
@@ -795,9 +807,9 @@ pub fn Nes6502(
             const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             } else {
-                _ = read_u8(address);
+                _ = self.read_u8(address);
             }
             return .{ .address = address, .value = 0, .page_crossed = page_crossed };
         }
@@ -808,9 +820,9 @@ pub fn Nes6502(
             const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             }
-            return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = page_crossed };
         }
         fn @"absolute,y mode: write"(self: *Self) Operand {
             const lo = @as(u16, self.read_next_u8());
@@ -819,52 +831,52 @@ pub fn Nes6502(
             const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             } else {
-                _ = read_u8(address);
+                _ = self.read_u8(address);
             }
 
             return .{ .address = address, .value = 0, .page_crossed = page_crossed };
         }
         fn @"(indirect,x) mode"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
-            const lo = @as(u16, read_u8(index +% self.x));
-            const hi = @as(u16, read_u8(index +% self.x +% 1)) << 8;
+            _ = self.read_u8(index);
+            const lo = @as(u16, self.read_u8(index +% self.x));
+            const hi = @as(u16, self.read_u8(index +% self.x +% 1)) << 8;
             const address = hi | lo;
-            return .{ .address = address, .value = read_u8(address), .page_crossed = false };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = false };
         }
         fn @"(indirect,x) mode: write"(self: *Self) Operand {
             const index = self.read_next_u8();
-            _ = read_u8(index);
-            const lo = @as(u16, read_u8(index +% self.x));
-            const hi = @as(u16, read_u8(index +% self.x +% 1)) << 8;
+            _ = self.read_u8(index);
+            const lo = @as(u16, self.read_u8(index +% self.x));
+            const hi = @as(u16, self.read_u8(index +% self.x +% 1)) << 8;
             const address = hi | lo;
             return .{ .address = address, .value = 0, .page_crossed = false };
         }
         fn @"(indirect),y mode"(self: *Self) Operand {
             const base_index = self.read_next_u8();
-            const lo = @as(u16, read_u8(base_index));
-            const hi = @as(u16, read_u8(base_index +% 1)) << 8;
+            const lo = @as(u16, self.read_u8(base_index));
+            const hi = @as(u16, self.read_u8(base_index +% 1)) << 8;
             const address = (hi | lo) +% self.y;
             const address_without_carry = hi | (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             }
-            return .{ .address = address, .value = read_u8(address), .page_crossed = page_crossed };
+            return .{ .address = address, .value = self.read_u8(address), .page_crossed = page_crossed };
         }
         fn @"(indirect),y mode: write"(self: *Self) Operand {
             const base_index = self.read_next_u8();
-            const lo = @as(u16, read_u8(base_index));
-            const hi = @as(u16, read_u8(base_index +% 1)) << 8;
+            const lo = @as(u16, self.read_u8(base_index));
+            const hi = @as(u16, self.read_u8(base_index +% 1)) << 8;
             const address = (hi | lo) +% self.y;
             const address_without_carry = hi + (address & 0x00ff);
             const page_crossed = address & 0xff00 != hi;
             if (page_crossed) {
-                _ = read_u8(address_without_carry);
+                _ = self.read_u8(address_without_carry);
             } else {
-                _ = read_u8(address);
+                _ = self.read_u8(address);
             }
             return .{ .address = address, .value = 0, .page_crossed = page_crossed };
         }
@@ -897,6 +909,21 @@ const CpuState = struct {
     ram: []struct { u16, u8 },
 };
 
+const TestBus = struct {
+    memory: []u8,
+    events: std.ArrayList(BusEvent),
+
+    inline fn read_u8(self: *TestBus, address: u16) u8 {
+        const val = self.memory[address];
+        self.events.appendAssumeCapacity(.{ address, val, "read" });
+        return val;
+    }
+    inline fn write_u8(self: *TestBus, address: u16, value: u8) void {
+        self.memory[address] = value;
+        self.events.appendAssumeCapacity(.{ address, value, "write" });
+    }
+};
+
 fn loadTestSuite(file_buffer: []u8, allocator: Allocator, dir: std.fs.Dir, op: usize) !std.json.Parsed([]TestCase) {
     var file = blk: {
         var buf: [10]u8 = undefined;
@@ -911,34 +938,18 @@ fn loadTestSuite(file_buffer: []u8, allocator: Allocator, dir: std.fs.Dir, op: u
     });
 }
 
-var test_memory: []u8 = undefined;
-var bus_events: std.ArrayList(BusEvent) = undefined;
-
-inline fn test_read_u8(address: u16) u8 {
-    const val = test_memory[address];
-    bus_events.appendAssumeCapacity(.{ address, val, "read" });
-    return val;
-}
-inline fn test_read_u16(address: u16) u16 {
-    const lo = test_read_u8(address);
-    const hi = test_read_u8(address +% 1);
-    return (@as(u16, hi) << 8) + lo;
-}
-inline fn test_write_u8(address: u16, value: u8) void {
-    test_memory[address] = value;
-    bus_events.appendAssumeCapacity(.{ address, value, "write" });
-}
-
 test "nes6502 test suite" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    test_memory = try allocator.alloc(u8, 1 << 16);
-    bus_events = try std.ArrayList(BusEvent).initCapacity(allocator, 32);
+    var bus = TestBus{
+        .memory = try allocator.alloc(u8, 1 << 16),
+        .events = try std.ArrayList(BusEvent).initCapacity(allocator, 32),
+    };
     const file_buffer = try allocator.alloc(u8, 10 * (2 << 20)); // 10Mb
 
-    const Cpu = Nes6502(test_read_u8, test_read_u16, test_write_u8);
+    const Cpu = Nes6502(TestBus);
     const expectCpuState = struct {
         fn call(expected: CpuState, cpu: Cpu) !void {
             try std.testing.expectEqual(cpu.status, @as(StatusFlags, @bitCast(expected.p)));
@@ -981,10 +992,11 @@ test "nes6502 test suite" {
         defer test_suite.deinit();
 
         for (test_suite.value, 0..) |testCase, index| {
-            bus_events.clearRetainingCapacity();
+            bus.events.clearRetainingCapacity();
             const initial = testCase.initial;
             const expected = testCase.final;
             var cpu = Cpu{
+                .bus = &bus,
                 .status = @bitCast(initial.p),
                 .pc = initial.pc,
                 .s = initial.s,
@@ -994,20 +1006,20 @@ test "nes6502 test suite" {
             };
             for (initial.ram) |entry| {
                 const addr, const value = entry;
-                test_memory[addr] = value;
+                bus.memory[addr] = value;
             }
 
             _ = cpu.execute_next_op();
 
             if (check_cycles) {
-                expectBusEvents(testCase.cycles, bus_events.items) catch |err| {
+                expectBusEvents(testCase.cycles, bus.events.items) catch |err| {
                     std.debug.print("Unexpected bus events for test case #{d}: {s}\n", .{ index, testCase.name });
                     std.debug.print("Expected bus events:\n", .{});
                     for (testCase.cycles) |event| {
                         std.debug.print("{s} @{X:04} => {X:02}\n", .{ event.@"2", event.@"0", event.@"1" });
                     }
                     std.debug.print("Actual bus events:\n", .{});
-                    for (bus_events.items) |event| {
+                    for (bus.events.items) |event| {
                         std.debug.print("{s} @{X:04} => {X:02}\n", .{ event.@"2", event.@"0", event.@"1" });
                     }
                     return err;
@@ -1032,12 +1044,12 @@ test "nes6502 test suite" {
                 std.debug.print("neg\t{d}\t\t{d}\n", .{ expected_status.negative, cpu.status.negative });
                 return err;
             };
-            expectMemoryState(expected.ram, test_memory) catch |err| {
+            expectMemoryState(expected.ram, bus.memory) catch |err| {
                 std.debug.print("Unexpected memory state for test case #{d}: {s}\n", .{ index, testCase.name });
                 std.debug.print("\tExpected\tActual\n", .{});
                 for (expected.ram) |entry| {
                     const address, const value = entry;
-                    const actual = test_memory[address];
+                    const actual = bus.memory[address];
                     std.debug.print("{s}{X:04}\t{X:02}\t\t{X:02}\n", .{ if (actual != value) "*" else " ", address, value, actual });
                 }
                 return err;
