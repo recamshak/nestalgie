@@ -1,57 +1,33 @@
 const std = @import("std");
+
 const nestalgie = @import("nestalgie");
+
+const Cartridge = @import("./cartridge.zig").Cartridge;
+const NROM = @import("./mapper/nrom.zig").NROM;
 const CPU = @import("./cpu.zig");
+const PPU = @import("./ppu.zig").PPU;
+const APU = @import("./apu.zig").APU;
+const Nes = @import("./nes.zig").Nes;
+const INes = @import("./ines.zig");
 
-const NesBus = struct {
-    cpuRam: [2048]u8 = [_]u8{0} ** 2048,
-    ppu: PPU,
-
-    inline fn read_u8(self: *const NesBus, address: u16) u8 {
-        return self.cpuRam[address];
-    }
-};
-
-const PPU = struct {};
-
-const TestBus = struct {
-    data: [2 << 16]u8 = [_]u8{0} ** (2 << 16),
-
-    inline fn read_u8(self: *const TestBus, address: u16) u8 {
-        return self.data[address];
-    }
-};
-
-const nesBus = TestBus{};
-inline fn read_u8(address: u16) u8 {
-    return nesBus.read_u8(address);
-}
-inline fn read_u16(address: u16) u16 {
-    return (@as(u16, nesBus.read_u8(address)) << 8) + nesBus.read_u8(address + 1);
-}
+var buffer: [128 * 1024]u8 = undefined;
+var fba = std.heap.FixedBufferAllocator.init(&buffer);
+var allocator = fba.allocator();
 
 pub fn main() !void {
-    var cpu = CPU.Nes6502(read_u8, read_u16){};
-    _ = cpu.execute_next_op();
-    // Prints to stderr, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-    try nestalgie.bufferedPrint();
-}
+    const filepath = std.mem.span(std.os.argv[1]);
+    const stats = try std.fs.cwd().statFile(filepath);
+    const data = try allocator.alloc(u8, stats.size);
+    _ = try std.fs.cwd().readFile(filepath, data);
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+    var ines = try INes.parse(data);
+    std.log.info("INes: {}", .{ines});
+    const cartridge = try Cartridge.from_ines(allocator, &ines);
+    var nes = try Nes.create(allocator, cartridge);
+    _ = nes.tick();
+    _ = nes.tick();
+    _ = nes.tick();
+    _ = nes.tick();
+    _ = nes.tick();
+    _ = nes.tick();
 }
