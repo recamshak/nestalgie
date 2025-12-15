@@ -1,0 +1,87 @@
+const std = @import("std");
+const c = @cImport({
+    @cInclude("SDL3/SDL.h");
+});
+
+const Self = @This();
+
+pub const DisplayError = error{
+    InitError,
+    DrawError,
+    RenderError,
+};
+
+window: ?*c.SDL_Window = undefined,
+renderer: ?*c.SDL_Renderer = undefined,
+screen_texture: ?*c.SDL_Texture = undefined,
+palette: [64]u32 = generate_palette("./2C02G_wiki.pal"),
+
+fn generate_palette(comptime path: []const u8) [64]u32 {
+    var palette: [64]u32 = undefined;
+    const rgb24entries = @embedFile(path);
+
+    for (0..64) |i| {
+        palette[i] = @as(u32, @intCast(rgb24entries[i * 3])) |
+            @as(u32, @intCast(rgb24entries[(i * 3) + 1])) << 8 |
+            @as(u32, @intCast(rgb24entries[(i * 3) + 2])) << 16;
+    }
+    return palette;
+}
+
+pub fn init() !Self {
+    var display = Self{};
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
+        std.log.err("Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
+        return DisplayError.InitError;
+    }
+    if (!c.SDL_CreateWindowAndRenderer("Nestalgie", 320, 240, c.SDL_WINDOW_RESIZABLE, &display.window, &display.renderer)) {
+        std.log.err("Couldn't create window and renderer: {s}", .{c.SDL_GetError()});
+        return DisplayError.InitError;
+    }
+    errdefer c.SDL_DestroyWindow(display.window);
+    errdefer c.SDL_DestroyRenderer(display.renderer);
+    if (!c.SDL_SetRenderLogicalPresentation(display.renderer, 640, 480, c.SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+        std.log.err("Couldn't setup renderer: {s}", .{c.SDL_GetError()});
+        return DisplayError.InitError;
+    }
+    if (c.SDL_CreateTexture(display.renderer, c.SDL_PIXELFORMAT_XBGR8888, c.SDL_TEXTUREACCESS_STREAMING, 320, 240)) |texture| {
+        display.screen_texture = texture;
+    } else {
+        std.log.err("Couldn't create screen texture: {s}", .{c.SDL_GetError()});
+        return DisplayError.InitError;
+    }
+    return display;
+}
+
+pub fn deinit(self: *Self) void {
+    c.SDL_DestroyTexture(self.screen_texture);
+    c.SDL_DestroyRenderer(self.renderer);
+    c.SDL_DestroyWindow(self.window);
+}
+
+pub fn draw(self: *Self, y: u8, scanline: [320]u8) !void {
+    var pixels: [*c]u8 = undefined;
+    var pitch: c_int = undefined;
+    if (!c.SDL_LockTexture(self.screen_texture, null, &pixels, &pitch)) {
+        std.log.err("Couldn't lock screen texture: {s}", .{c.SDL_GetError()});
+        return DisplayError.DrawError;
+    }
+
+    const offset = @as(u32, @bitCast(pitch * y));
+    var row: [*]u32 = @ptrCast(@alignCast(pixels + offset));
+    for (0..320) |i| {
+        row[i] = self.palette[scanline[i]];
+    }
+    c.SDL_UnlockTexture(self.screen_texture);
+}
+
+pub fn render(self: *Self) !void {
+    if (!c.SDL_RenderTexture(self.renderer, self.screen_texture, null, null)) {
+        std.log.err("Couldn't render screen texture: {s}", .{c.SDL_GetError()});
+        return DisplayError.RenderError;
+    }
+    if (!c.SDL_RenderPresent(self.renderer)) {
+        std.log.err("Couldn't render the screen: {s}", .{c.SDL_GetError()});
+        return DisplayError.RenderError;
+    }
+}

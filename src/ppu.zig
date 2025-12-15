@@ -36,6 +36,8 @@ pub const PPU = struct {
     x: u3 = 0,
     w: u1 = 0,
 
+    draw: *const fn (y: u8, scanline: [320]u8) void,
+
     pub inline fn read_u8(_: *PPU, address: u16) u8 {
         std.log.info("PPU reading {X:04}\n", .{address});
         return 0;
