@@ -55,6 +55,7 @@ const Header = packed struct {
 pub const INes = struct {
     header: Header,
     prg_rom: []u8,
+    chr_rom: []u8,
 
     pub fn mapper_id(self: *const INes) u8 {
         const lo = @as(u8, self.header.flags6.mapper_number_lo);
@@ -68,8 +69,14 @@ pub fn parse(bytes: []u8) !INes {
     std.log.info("magic number: {X}", .{header.magic_number});
     std.log.info("prg rom size: {d}", .{header.prg_rom_size});
     std.log.info("header size: {d}", .{@sizeOf(Header)});
+    const prg_rom_start = @sizeOf(Header);
+    const prg_rom_end = prg_rom_start + 16384 * @as(u16, header.prg_rom_size);
+    const chr_rom_start = prg_rom_end;
+    const chr_rom_end = chr_rom_start + 8192 * @as(u16, header.chr_rom_size);
+
     return .{
         .header = header,
-        .prg_rom = bytes[@sizeOf(Header) .. @sizeOf(Header) + (16384 * @as(u16, header.prg_rom_size))],
+        .prg_rom = bytes[prg_rom_start..prg_rom_end],
+        .chr_rom = bytes[chr_rom_start..chr_rom_end],
     };
 }

@@ -8,11 +8,12 @@ const Self = @This();
 
 allocator: std.mem.Allocator,
 cpu: CPU.Nes6502(Self),
-ppu: PPU,
+ppu: PPU(Self),
 apu: APU,
 cartridge: Cartridge,
 
 internal_ram: [2048]u8 = .{0} ** 2048,
+palette: [32]u8 = .{0} ** 32,
 
 pub inline fn read_u8(self: *Self, address: u16) u8 {
     return switch (address & 0xE000) {
@@ -32,11 +33,25 @@ pub inline fn write_u8(self: *Self, address: u16, value: u8) void {
     }
 }
 
+pub inline fn ppu_read_u8(self: *Self, address: u16) u8 {
+    return switch (address) {
+        0x3F00 => self.palette[address & 0x001F],
+        else => self.cartridge.ppu_read_u8(address),
+    };
+}
+
+pub inline fn ppu_write_u8(self: *Self, address: u16, value: u8) void {
+    switch (address) {
+        0x3F00 => self.palette[address & 0x001F] = value,
+        else => self.cartridge.ppu_write_u8(address, value),
+    }
+}
+
 pub fn create(allocator: std.mem.Allocator, draw: *const fn (y: u8, scanline: [320]u8) void, cartridge: Cartridge) !*Self {
     var nes = try allocator.create(Self);
     nes.* = .{
         .cpu = CPU.Nes6502(Self){ .bus = nes },
-        .ppu = PPU{ .draw = draw },
+        .ppu = PPU(Self){ .draw = draw, .bus = nes },
         .apu = APU{},
         .cartridge = cartridge,
         .allocator = allocator,
