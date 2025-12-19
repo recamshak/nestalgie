@@ -149,10 +149,11 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
 
         pattern_base_address: u16 = 0,
 
-        nametable_buffer: RingBuffer(3, u8) = .{},
-        attribute_buffer: RingBuffer(2, u8) = .{},
-        pattern_lsb_buffer: RingBuffer(2, u8) = .{},
-        pattern_msb_buffer: RingBuffer(2, u8) = .{},
+        nametable_buffer: RingBuffer(1, u8) = .{},
+        pattern_lsb_buffer: RingBuffer(1, u8) = .{},
+        pattern_msb_buffer: RingBuffer(1, u8) = .{},
+        palette_lsb_buffer: RingBuffer(1, u1) = .{},
+        palette_msb_buffer: RingBuffer(1, u1) = .{},
 
         pixel_buffer: [256]u6 = .{0} ** 256,
         pixel_buffer_idx: u8 = 0,
@@ -197,6 +198,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         fn attributeAddress(self: *Self) u16 {
             const v = self.v.asWord();
             return 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+            //return 0x23C0 | (@as(u16, self.v.nametable) << 10) | ((self.v.coarse_y_scroll >> 2) << 3) | (self.v.coarse_x_scroll >> 2);
         }
         fn patternAddress(self: *Self, index: u8, plane: u1) u16 {
             return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
@@ -298,7 +300,13 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     self.nametable_buffer.append(val);
                 },
                 // fetch AT
-                3 => self.attribute_buffer.append(self.bus.ppu_read_u8(self.attributeAddress())),
+                3 => {
+                    const attribute = self.bus.ppu_read_u8(self.attributeAddress());
+                    const attribute_lsb_index: u3 = @truncate((self.v.coarse_y_scroll & 2) << 1 | (self.v.coarse_x_scroll & 2));
+                    const mask = @as(u8, 1) << attribute_lsb_index;
+                    self.palette_lsb_buffer.append(@bitCast(attribute & mask != 0));
+                    self.palette_msb_buffer.append(@bitCast(attribute & (mask << 1) != 0));
+                },
                 // fetch pattern lsb
                 5 => self.pattern_lsb_buffer.append(self.bus.ppu_read_u8(self.patternAddress(
                     self.nametable_buffer.head(),
@@ -313,13 +321,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     _ = self.nametable_buffer.pop_head();
                     self.context.next_tile_pattern_lsb = self.pattern_lsb_buffer.pop_head();
                     self.context.next_tile_pattern_msb = self.pattern_msb_buffer.pop_head();
-
-                    const attribute = self.attribute_buffer.pop_head();
-                    const attribute_lsb_index: u3 = @truncate((self.v.coarse_y_scroll & 1) << 2 | ((self.v.coarse_x_scroll & 1) << 1));
-                    const mask = @as(u8, 1) << attribute_lsb_index;
-                    self.context.next_tile_palette_lsb = @bitCast(attribute & mask != 0);
-                    self.context.next_tile_palette_msb = @bitCast(attribute & (mask << 1) != 0);
-
+                    self.context.next_tile_palette_lsb = self.palette_lsb_buffer.pop_head();
+                    self.context.next_tile_palette_msb = self.palette_msb_buffer.pop_head();
                     self.incCoarseX();
                 },
                 else => {},
@@ -345,8 +348,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             if (self.scanline == 0 and self.dot == 0 and self.is_odd_frame) {
                 self.dot = 1;
             }
-            if (self.dot == 0) return;
             switch (self.dot) {
+                0 => {},
                 1...255 => {
                     self.fetch_tile_phase_tick();
                     self.drawNextPixel();
