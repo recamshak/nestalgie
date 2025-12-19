@@ -1,5 +1,5 @@
 const std = @import("std");
-
+const tracy = @import("tracy");
 const nestalgie = @import("nestalgie");
 
 const Cartridge = @import("./cartridge.zig").Cartridge;
@@ -18,12 +18,19 @@ var buffer: [128 * 1024]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&buffer);
 var allocator = fba.allocator();
 var display = Display{};
+pub const log_level: std.log.Level = .err;
 
 pub fn main() !void {
+    tracy.setThreadName("Main");
+    defer tracy.message("Graceful main thread exit", .{});
+
     display = try Display.init();
     defer display.deinit();
     const draw = struct {
-        fn call(y: u8, scanline: [320]u8) void {
+        fn call(y: u8, scanline: [256]u6) void {
+            if (y == 0) {
+                display.render() catch unreachable;
+            }
             display.draw(y, scanline) catch unreachable;
         }
     }.call;
@@ -38,15 +45,14 @@ pub fn main() !void {
     var nes = try Nes.create(allocator, draw, cartridge);
     defer nes.deinit();
 
-    for (0..64) |value| {
-        draw(@intCast(value), .{@as(u8, @intCast(value))} ** 320);
-    }
     var running = true;
     while (running) {
+        // var key: [1]u8 = undefined;
+        //_ = try std.fs.File.stdin().read(&key);
         _ = nes.tick();
+
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            try display.render();
             switch (event.type) {
                 c.SDL_EVENT_QUIT => {
                     running = false;

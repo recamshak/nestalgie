@@ -34,17 +34,18 @@ pub fn init() !Self {
         std.log.err("Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
-    if (!c.SDL_CreateWindowAndRenderer("Nestalgie", 320, 240, c.SDL_WINDOW_RESIZABLE, &display.window, &display.renderer)) {
+    if (!c.SDL_CreateWindowAndRenderer("Nestalgie", 256, 240, c.SDL_WINDOW_RESIZABLE, &display.window, &display.renderer)) {
         std.log.err("Couldn't create window and renderer: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
     errdefer c.SDL_DestroyWindow(display.window);
     errdefer c.SDL_DestroyRenderer(display.renderer);
+    _ = c.SDL_SetRenderVSync(display.renderer, 0);
     if (!c.SDL_SetRenderLogicalPresentation(display.renderer, 640, 480, c.SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
         std.log.err("Couldn't setup renderer: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
-    if (c.SDL_CreateTexture(display.renderer, c.SDL_PIXELFORMAT_XBGR8888, c.SDL_TEXTUREACCESS_STREAMING, 320, 240)) |texture| {
+    if (c.SDL_CreateTexture(display.renderer, c.SDL_PIXELFORMAT_XBGR8888, c.SDL_TEXTUREACCESS_STREAMING, 256, 240)) |texture| {
         display.screen_texture = texture;
     } else {
         std.log.err("Couldn't create screen texture: {s}", .{c.SDL_GetError()});
@@ -59,7 +60,7 @@ pub fn deinit(self: *Self) void {
     c.SDL_DestroyWindow(self.window);
 }
 
-pub fn draw(self: *Self, y: u8, scanline: [320]u8) !void {
+pub fn draw(self: *Self, y: u8, scanline: [256]u6) !void {
     var pixels: [*c]u8 = undefined;
     var pitch: c_int = undefined;
     if (!c.SDL_LockTexture(self.screen_texture, null, &pixels, &pitch)) {
@@ -69,7 +70,7 @@ pub fn draw(self: *Self, y: u8, scanline: [320]u8) !void {
 
     const offset = @as(u32, @bitCast(pitch * y));
     var row: [*]u32 = @ptrCast(@alignCast(pixels + offset));
-    for (0..320) |i| {
+    for (0..256) |i| {
         row[i] = self.palette[scanline[i]];
     }
     c.SDL_UnlockTexture(self.screen_texture);

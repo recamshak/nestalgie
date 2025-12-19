@@ -39,6 +39,15 @@ pub fn Nes6502(comptime Bus: type) type {
         irq: u1 = 0,
         nmi: u1 = 0,
 
+        nmi_triggered: bool = false,
+
+        pub fn set_nmi(self: *Self, value: u1) void {
+            if (self.nmi == 0 and value == 1) {
+                self.nmi_triggered = true;
+            }
+            self.nmi = value;
+        }
+
         const stp = Operation{ op_stp, null, 0 };
         const not_supported = Operation{ op_not_supported, null, 0 };
 
@@ -357,11 +366,21 @@ pub fn Nes6502(comptime Bus: type) type {
         }
 
         pub fn execute_next_op(self: *Self) u8 {
-            // TODO: IRQ & NMI
-            const op_code = self.read_next_u8();
-            const op = op_table[op_code];
-            std.log.info("execute op {X:02} @{X:04}", .{ op_code, self.pc -% 1 });
-            return self.execute(op, op_code);
+            // TODO: IRQ
+            if (self.nmi_triggered) {
+                //std.log.debug("NMI triggered", .{});
+                self.nmi_triggered = false;
+                self.push_u16(self.pc);
+                self.push_u8(@bitCast(self.status));
+                self.status.b = 0;
+                self.pc = self.read_u16(0xFFFA);
+                return 5;
+            } else {
+                const op_code = self.read_next_u8();
+                const op = op_table[op_code];
+                //std.log.debug("execute op {X:02} @{X:04}", .{ op_code, self.pc -% 1 });
+                return self.execute(op, op_code);
+            }
         }
 
         fn op_nop(self: *Self, op_code: u8) u8 {

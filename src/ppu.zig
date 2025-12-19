@@ -77,38 +77,52 @@ const VRAMADDR = packed struct(u16) {
 };
 
 fn RingBuffer(comptime capacity: u8, Type: type) type {
-    const Self = @This();
-
     return struct {
+        const Self = @This();
         buffer: [capacity]Type = undefined,
-        head: u8 = 0,
+        head_index: u8 = 0,
         len: u8 = 0,
 
-        pub fn push(self: *Self, value: Type) void {
-            self.buffer[self.head + self.len % capacity] = value;
-            if (self.len < capacity) {
+        pub fn append(self: *Self, value: Type) void {
+            if (self.len == capacity) {
+                self.buffer[self.head_index] = value;
+                self.head_index = (self.head_index + 1) % capacity;
+            } else {
+                self.buffer[(self.head_index + self.len) % capacity] = value;
                 self.len += 1;
             }
         }
-        pub fn pop(self: *Self) Type {
-            std.debug.assert(self.len > 0);
-            const value = self.buffer[self.head];
-            self.head = (self.head + 1) % capacity;
+        pub fn pop_head(self: *Self) Type {
+            if (self.len == 0) return 0;
+            const value = self.buffer[self.head_index];
+            self.head_index = (self.head_index + 1) % capacity;
             self.len -= 1;
             return value;
         }
-        pub fn peek(self: *Self) Type {
-            std.debug.assert(self.len > 0);
-            return self.buffer[self.head];
+        pub fn head(self: *Self) Type {
+            if (self.len == 0) return 0;
+            return self.buffer[self.head_index];
+        }
+        pub fn tail(self: *Self) Type {
+            if (self.len == 0) return 0;
+            return self.buffer[self.head_index + self.len - 1];
         }
     };
 }
 
-// The NES has a 2Kb VRAM that can be rerouted by the cartridge as is the
-// case for the entire PPU bus address space from 0x0000 to 0x3EFF.
-// For simplicity only the non-reroutable address space (0x3F00 - 0x3FFF) is handled by this PPU
-// the remaining must be handled by the cartridge.
-pub fn PPU(comptime Bus: type) type {
+const RenderingContext = struct {
+    next_tile_pattern_lsb: u8 = 0,
+    next_tile_pattern_msb: u8 = 0,
+    next_tile_palette_lsb: u1 = 0,
+    next_tile_palette_msb: u1 = 0,
+
+    pattern_lsb: u8 = 0,
+    pattern_msb: u8 = 0,
+    palette_lsb: u8 = 0, // bit 2
+    palette_msb: u8 = 0, // bit 3
+};
+
+pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
     return struct {
         const Self = @This();
 
@@ -116,6 +130,7 @@ pub fn PPU(comptime Bus: type) type {
         t: VRAMADDR = .{},
         x: u3 = 0,
         w: u1 = 0,
+        nmi_output: u1 = 0,
 
         ctrl: PPUCTRL = .{},
         mask: PPUMASK = .{},
@@ -129,19 +144,23 @@ pub fn PPU(comptime Bus: type) type {
         ppudata_read_latch: u8 = 0,
 
         scanline: u16 = 261,
-        scanline_cycle: u16 = 0,
-        frame_counter: u8 = 0,
+        dot: u16 = 0,
+        is_odd_frame: bool = false,
 
-        tile_buffer: RingBuffer(3, u8) = .{},
-        attr_buffer: RingBuffer(3, u8) = .{},
-        pattern_lsb_buffer: RingBuffer(3, u8) = .{},
-        pattern_msb_buffer: RingBuffer(3, u8) = .{},
+        pattern_base_address: u16 = 0,
 
-        pixel_buffer: [320]u8 = .{0} ** 320,
-        draw: *const fn (y: u8, pixels: [320]u8) void,
+        nametable_buffer: RingBuffer(3, u8) = .{},
+        attribute_buffer: RingBuffer(2, u8) = .{},
+        pattern_lsb_buffer: RingBuffer(2, u8) = .{},
+        pattern_msb_buffer: RingBuffer(2, u8) = .{},
 
-        // All access to PPU bus in the range 0x0000 - 0x3EFF is delegated to this bus
+        pixel_buffer: [256]u6 = .{0} ** 256,
+        pixel_buffer_idx: u8 = 0,
+        draw: *const fn (y: u8, pixels: [256]u6) void,
+        context: RenderingContext = .{},
+
         bus: *Bus,
+        cpu: *Cpu,
 
         inline fn oamBytes(self: *Self) [*]u8 {
             return @ptrCast(&self.oam);
@@ -155,15 +174,61 @@ pub fn PPU(comptime Bus: type) type {
             const inc: u16 = if (self.ctrl.vram_address_increment == 0) 1 else 32;
             self.v = @bitCast(self.vramAddress() +% inc);
         }
+        fn incCoarseX(self: *Self) void {
+            self.v.coarse_x_scroll +%= 1;
+            if (self.v.coarse_x_scroll == 0) {
+                self.v.nametable ^= 1;
+            }
+        }
+        fn incY(self: *Self) void {
+            self.v.fine_y_scroll +%= 1;
+            if (self.v.fine_y_scroll == 0) {
+                if (self.v.coarse_y_scroll == 29) {
+                    self.v.coarse_y_scroll = 0;
+                    self.v.nametable ^= 2;
+                } else {
+                    self.v.coarse_y_scroll +%= 1;
+                }
+            }
+        }
+        fn tileAddress(self: *Self) u16 {
+            return 0x2000 | (self.v.asWord() & 0x0FFF);
+        }
+        fn attributeAddress(self: *Self) u16 {
+            return 0x23C0 | (@as(u16, self.v.nametable) << 10) | ((self.v.coarse_y_scroll >> 2) << 3) | (self.v.coarse_x_scroll >> 2);
+        }
+        fn patternAddress(self: *Self, index: u8, plane: u1) u16 {
+            return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
+        }
+        fn drawNextPixel(self: *Self) void {
+            const pattern_mask: u8 = @as(u8, 1) << (7 - self.x);
+            const pattern_msb: u2 = @intFromBool(self.context.pattern_msb & pattern_mask != 0);
+            const pattern_lsb: u2 = @intFromBool(self.context.pattern_lsb & pattern_mask != 0);
+            const palette_msb: u4 = @intFromBool(self.context.palette_msb & pattern_mask != 0);
+            const palette_lsb: u4 = @intFromBool(self.context.palette_lsb & pattern_mask != 0);
 
-        //fn fetchNextTile(self: *Self) u8 {}
+            const color_index: u16 = palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb;
+
+            const color = if (pattern_msb == 0 and pattern_lsb == 0) self.bus.ppu_read_u8(0x3F00) else self.bus.ppu_read_u8(0x3F00 | color_index);
+            self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+            self.pixel_buffer_idx +%= 1;
+            self.shift_registers();
+        }
+        fn renderingEnabled(self: *Self) bool {
+            return (self.mask.enable_backgroud_rendering | self.mask.enable_sprite_rendering) != 0;
+        }
 
         pub inline fn read_u8(self: *Self, address: u16) u8 {
-            std.log.info("PPU reading {X:04}\n", .{address});
             switch (address & 0x0007) {
                 2 => {
-                    self.latch = @bitCast(self.status);
+                    self.latch = @as(u8, @bitCast(self.status)) & 0xE0;
                     self.w = 0;
+                    self.ctrl.vblank_nmi_enabled = 0;
+                    self.cpu.set_nmi(0);
+                    return self.latch;
+                },
+                4 => {
+                    self.latch = self.oamBytes()[self.oamaddr];
                     return self.latch;
                 },
                 7 => {
@@ -177,12 +242,14 @@ pub fn PPU(comptime Bus: type) type {
             }
         }
         pub inline fn write_u8(self: *Self, address: u16, value: u8) void {
-            std.log.info("PPU writing {X:02} @{X:04}\n", .{ value, address });
             switch (address & 0x0007) {
                 // 0x2000 PPUCTRL write
                 0 => {
                     self.ctrl = @bitCast(value);
+                    self.pattern_base_address = if (self.ctrl.background_pattern_table_address == 0) 0x0000 else 0x1000;
                     self.t.nametable = self.ctrl.base_nametable_address;
+                    self.nmi_output = self.ctrl.vblank_nmi_enabled;
+                    if (self.nmi_output == 0 or self.ctrl.vblank_nmi_enabled == 0) self.cpu.set_nmi(0);
                 },
 
                 1 => self.mask = @bitCast(value),
@@ -190,7 +257,7 @@ pub fn PPU(comptime Bus: type) type {
                 3 => self.oamaddr = value,
                 4 => {
                     self.oamBytes()[self.oamaddr] = value;
-                    self.oamaddr += 1;
+                    self.oamaddr +%= 1;
                 },
                 // 0x2005 PPUSCROLL write
                 5 => {
@@ -223,63 +290,124 @@ pub fn PPU(comptime Bus: type) type {
         }
 
         fn fetch_tile_phase_tick(self: *Self) void {
-            switch ((self.scanline_cycle - 1) % 8) {
+            switch (self.dot % 8) {
                 // fetch NT
-                0 => void,
+                1 => {
+                    const val = self.bus.ppu_read_u8(self.tileAddress());
+                    self.nametable_buffer.append(val);
+                },
                 // fetch AT
-                2 => void,
+                3 => self.attribute_buffer.append(self.bus.ppu_read_u8(self.attributeAddress())),
                 // fetch pattern lsb
-                4 => void,
+                5 => self.pattern_lsb_buffer.append(self.bus.ppu_read_u8(self.patternAddress(
+                    self.nametable_buffer.head(),
+                    0,
+                ))),
                 // fetch pattern msb
-                6 => void,
+                7 => self.pattern_msb_buffer.append(self.bus.ppu_read_u8(self.patternAddress(
+                    self.nametable_buffer.head(),
+                    1,
+                ))),
+                0 => {
+                    _ = self.nametable_buffer.pop_head();
+                    self.context.next_tile_pattern_lsb = self.pattern_lsb_buffer.pop_head();
+                    self.context.next_tile_pattern_msb = self.pattern_msb_buffer.pop_head();
+
+                    const attribute = self.attribute_buffer.pop_head();
+                    const attribute_lsb_index: u3 = @truncate((self.v.coarse_y_scroll & 1) << 2 | ((self.v.coarse_x_scroll & 1) << 1));
+                    const mask = @as(u8, 1) << attribute_lsb_index;
+                    self.context.next_tile_palette_lsb = @bitCast(attribute & mask != 0);
+                    self.context.next_tile_palette_msb = @bitCast(attribute & (mask << 1) != 0);
+
+                    self.incCoarseX();
+                },
                 // nothing
-                else => void,
+                else => void{},
             }
         }
 
+        fn shift_registers(self: *Self) void {
+            self.context.next_tile_pattern_lsb, var bit: u1 = @shlWithOverflow(self.context.next_tile_pattern_lsb, 1);
+            self.context.pattern_lsb = (self.context.pattern_lsb << 1) | bit;
+            self.context.next_tile_pattern_msb, bit = @shlWithOverflow(self.context.next_tile_pattern_msb, 1);
+            self.context.pattern_msb = (self.context.pattern_msb << 1) | bit;
+            self.context.palette_lsb = (self.context.palette_lsb << 1) | self.context.next_tile_palette_lsb;
+            self.context.palette_msb = (self.context.palette_msb << 1) | self.context.next_tile_palette_msb;
+        }
+
         fn fetch_sprite_phase_tick(self: *Self) void {
-            switch ((self.scanline_cycle - 1) % 8) {
+            switch ((self.dot - 1) % 8) {
                 // fetch NT
-                0 => void,
+                0 => void{},
                 // fetch AT
-                2 => void,
+                2 => void{},
                 // fetch pattern lsb
-                4 => void,
+                4 => void{},
                 // fetch pattern msb
-                6 => void,
+                6 => void{},
                 // nothing
-                else => void,
+                else => void{},
+            }
+        }
+
+        pub fn visible_scanline(self: *Self) void {
+            if (self.scanline == 0 and self.dot == 0 and self.is_odd_frame) {
+                self.dot = 1;
+            }
+            if (self.dot == 0) return;
+            switch (self.dot) {
+                1...255 => {
+                    self.fetch_tile_phase_tick();
+                    self.drawNextPixel();
+                },
+                256 => {
+                    self.fetch_tile_phase_tick();
+                    self.drawNextPixel();
+                    if (self.scanline != 261) {
+                        self.draw(@as(u8, self.v.coarse_y_scroll) << 3 | self.v.fine_y_scroll, self.pixel_buffer);
+                    }
+                    self.incY();
+                },
+                257 => {
+                    self.v.coarse_x_scroll = self.t.coarse_x_scroll;
+                    self.v.nametable = (self.v.nametable & 2) | (self.t.nametable & 1);
+                },
+                258...279 => void{},
+                280...304 => if (self.scanline == 261) {
+                    self.v.coarse_y_scroll = self.t.coarse_y_scroll;
+                },
+                305...320 => void{},
+                321...336 => {
+                    self.fetch_tile_phase_tick();
+                    self.shift_registers();
+                },
+                337...340 => void{},
+                else => unreachable,
             }
         }
 
         pub fn tick(self: *Self) void {
-            switch (self.scanline) {
-                // visible scanlines & dummy scanline
-                0...239, 261 => {
-                    if (self.scanline_cycle == 0) {
-                        void;
-                    } else if (self.scanline_cycle <= 256) {
-                        self.fetch_tile_phase_tick();
-                        // TODO: draw pixel
-                    } else if (self.scanline_cycle <= 320) {
-                        self.fetch_sprite_phase_tick();
-                    } else if (self.scanline_cycle <= 336) {
-                        self.fetch_tile_phase_tick();
-                    } else {
-                        // TODO: fetch 2 NT bytes
-                    }
-                },
-                // idle scanline
-                240 => void,
-                241 => if (self.scanline_cycle == 1) {
-                    self.ctrl.vblank_nmi_enabled = 1;
-                },
-                // VBlank scanlines
-                242...260 => void,
+            if (self.renderingEnabled() and (self.scanline == 261 or self.scanline <= 239)) {
+                self.visible_scanline();
             }
-            self.scanline_cycle = (self.scanline_cycle + 1) % 341;
-            if (self.scanline_cycle == 0) {
+
+            if (self.dot == 1 and self.scanline == 261) {
+                self.ctrl.vblank_nmi_enabled = 0;
+                self.status.vblank = 0;
+                self.cpu.set_nmi(0);
+            }
+            if (self.dot == 1 and self.scanline == 241) {
+                self.ctrl.vblank_nmi_enabled = 1;
+                self.status.vblank = 1;
+                self.cpu.set_nmi(self.nmi_output);
+            }
+
+            self.dot = (self.dot + 1) % 341;
+            if (self.dot == 0) {
                 self.scanline = (self.scanline + 1) % 262;
+                if (self.scanline == 0) {
+                    self.is_odd_frame = !self.is_odd_frame;
+                }
             }
         }
     };

@@ -33,9 +33,9 @@ pub const Cartridge = union(enum) {
         }
     }
 
-    pub fn from_ines(_: std.mem.Allocator, ines: *const INes) !Cartridge {
+    pub fn from_ines(allocator: std.mem.Allocator, ines: *const INes) !Cartridge {
         switch (ines.mapper_id()) {
-            0 => return .{ .nrom = try NROM.from_ines(ines) },
+            0 => return .{ .nrom = try NROM.from_ines(allocator, ines) },
             else => {
                 std.log.err("Unsupported mapper with ID: {d}", .{ines.mapper_id()});
                 return CartridgeError.UnsupportedMapper;
