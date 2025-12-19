@@ -195,7 +195,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             return 0x2000 | (self.v.asWord() & 0x0FFF);
         }
         fn attributeAddress(self: *Self) u16 {
-            return 0x23C0 | (@as(u16, self.v.nametable) << 10) | ((self.v.coarse_y_scroll >> 2) << 3) | (self.v.coarse_x_scroll >> 2);
+            const v = self.v.asWord();
+            return 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
         }
         fn patternAddress(self: *Self, index: u8, plane: u1) u16 {
             return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
@@ -321,8 +322,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
 
                     self.incCoarseX();
                 },
-                // nothing
-                else => void{},
+                else => {},
             }
         }
 
@@ -336,17 +336,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         }
 
         fn fetch_sprite_phase_tick(self: *Self) void {
-            switch ((self.dot - 1) % 8) {
-                // fetch NT
-                0 => void{},
-                // fetch AT
-                2 => void{},
-                // fetch pattern lsb
-                4 => void{},
-                // fetch pattern msb
-                6 => void{},
-                // nothing
-                else => void{},
+            switch (self.dot % 8) {
+                else => {},
             }
         }
 
@@ -372,16 +363,16 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     self.v.coarse_x_scroll = self.t.coarse_x_scroll;
                     self.v.nametable = (self.v.nametable & 2) | (self.t.nametable & 1);
                 },
-                258...279 => void{},
+                258...279 => {},
                 280...304 => if (self.scanline == 261) {
                     self.v.coarse_y_scroll = self.t.coarse_y_scroll;
                 },
-                305...320 => void{},
+                305...320 => {},
                 321...336 => {
                     self.fetch_tile_phase_tick();
                     self.shift_registers();
                 },
-                337...340 => void{},
+                337...340 => {},
                 else => unreachable,
             }
         }
