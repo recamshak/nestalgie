@@ -3,6 +3,7 @@ const Cartridge = @import("./cartridge.zig").Cartridge;
 const CPU = @import("./cpu.zig");
 const PPU = @import("./ppu.zig").PPU;
 const APU = @import("./apu.zig").APU;
+const Controller = @import("./controller.zig");
 const tracy = @import("tracy");
 
 const Self = @This();
@@ -12,6 +13,7 @@ allocator: std.mem.Allocator,
 cpu: Cpu,
 ppu: PPU(Self, Cpu),
 apu: APU,
+controller: Controller,
 cartridge: Cartridge,
 
 internal_ram: [2048]u8 = .{0} ** 2048,
@@ -27,7 +29,11 @@ pub inline fn read_u8(self: *Self, address: u16) u8 {
     return switch (address & 0xE000) {
         0x0000 => self.internal_ram[address & 0x07FF],
         0x2000 => self.ppu.read_u8(address),
-        0x4000 => self.apu.read_u8(address),
+        0x4000 => switch (address) {
+            0x4016 => self.controller.readController1(),
+            0x4017 => self.controller.readController2(),
+            else => self.apu.read_u8(address),
+        },
         else => self.cartridge.read_u8(address),
     };
 }
@@ -38,6 +44,7 @@ pub inline fn write_u8(self: *Self, address: u16, value: u8) void {
         0x2000 => self.ppu.write_u8(address, value),
         0x4000 => {
             if (address == 0x4014) {
+                // move that into PPU and use a pointer since it's from a single page and the CPU is "stopped".
                 for (0..256) |i| {
                     const data = self.read_u8(@as(u16, value) << 8 | @as(u16, @truncate(i)));
                     self.write_u8(0x2004, data);
@@ -45,6 +52,8 @@ pub inline fn write_u8(self: *Self, address: u16, value: u8) void {
                         self.ppu.tick();
                     }
                 }
+            } else if (address == 0x4016) {
+                self.controller.write(value);
             } else {
                 self.apu.write_u8(address, value);
             }
@@ -70,7 +79,12 @@ pub inline fn ppu_write_u8(self: *Self, address: u16, value: u8) void {
     }
 }
 
-pub fn create(allocator: std.mem.Allocator, draw: *const fn (y: u8, scanline: [256]u6) void, cartridge: Cartridge) !*Self {
+pub fn create(
+    allocator: std.mem.Allocator,
+    draw: *const fn (y: u8, scanline: [256]u6) void,
+    fetch_controller1: *const fn () Controller.Status,
+    cartridge: Cartridge,
+) !*Self {
     var nes = try allocator.create(Self);
     nes.* = .{
         .cpu = Cpu{ .bus = nes },
@@ -80,6 +94,7 @@ pub fn create(allocator: std.mem.Allocator, draw: *const fn (y: u8, scanline: [2
             .bus = nes,
         },
         .apu = APU{},
+        .controller = .{ .fetch = fetch_controller1 },
         .cartridge = cartridge,
         .allocator = allocator,
     };
