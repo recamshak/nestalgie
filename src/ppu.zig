@@ -210,9 +210,11 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             const palette_msb: u4 = @intFromBool(self.context.palette_msb & pattern_mask != 0);
             const palette_lsb: u4 = @intFromBool(self.context.palette_lsb & pattern_mask != 0);
 
-            const color_index: u16 = palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb;
+            const color = if (pattern_msb | pattern_lsb == 0)
+                self.bus.ppu_read_u8(0x3F00)
+            else
+                self.bus.ppu_read_u8(@as(u16, 0x3F00) | palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb);
 
-            const color = if (pattern_msb == 0 and pattern_lsb == 0) self.bus.ppu_read_u8(0x3F00) else self.bus.ppu_read_u8(0x3F00 | color_index);
             self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
             self.pixel_buffer_idx +%= 1;
             self.shift_registers();
@@ -388,6 +390,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             if (self.dot == 1 and self.scanline == 261) {
                 self.ctrl.vblank_nmi_enabled = 0;
                 self.status.vblank = 0;
+                self.status.sprite_0_hit = 0;
+                self.status.sprite_overflow = 0;
                 self.cpu.set_nmi(0);
             }
             if (self.dot == 1 and self.scanline == 241) {

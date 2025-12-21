@@ -1,5 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const tracy = @import("tracy");
+
 const Allocator = std.mem.Allocator;
 
 const StatusFlags = packed struct(u8) {
@@ -757,6 +759,8 @@ pub fn Nes6502(comptime Bus: type) type {
             return op.@"2";
         }
         inline fn execute(self: *Self, op: Operation, op_code: u8) u8 {
+            const zone = tracy.initZone(@src(), .{ .name = "Execute OP" });
+            defer zone.deinit();
             return op.@"0"(self, op_code);
         }
 

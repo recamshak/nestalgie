@@ -3,6 +3,7 @@ const Cartridge = @import("./cartridge.zig").Cartridge;
 const CPU = @import("./cpu.zig");
 const PPU = @import("./ppu.zig").PPU;
 const APU = @import("./apu.zig").APU;
+const tracy = @import("tracy");
 
 const Self = @This();
 const Cpu = CPU.Nes6502(Self);
@@ -93,6 +94,9 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn tick(self: *Self) u8 {
+    const zone = tracy.initZone(@src(), .{ .name = "NES tick" });
+    defer zone.deinit();
+
     const cpu_cycles = self.cpu.execute_next_op();
     for (0..cpu_cycles * 3) |_| {
         self.ppu.tick();

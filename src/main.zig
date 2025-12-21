@@ -22,7 +22,6 @@ pub const log_level: std.log.Level = .err;
 
 pub fn main() !void {
     tracy.setThreadName("Main");
-    defer tracy.message("Graceful main thread exit", .{});
 
     display = try Display.init();
     defer display.deinit();
@@ -30,15 +29,16 @@ pub fn main() !void {
         fn call(y: u8, scanline: [256]u6) void {
             if (y == 0) {
                 display.render() catch unreachable;
+                tracy.frameMark();
             }
             display.draw(y, scanline) catch unreachable;
+            tracy.frameMarkNamed("scanline");
         }
     }.call;
 
     const filepath = std.mem.span(std.os.argv[1]);
-    const stats = try std.fs.cwd().statFile(filepath);
-    const data = try allocator.alloc(u8, stats.size);
-    _ = try std.fs.cwd().readFile(filepath, data);
+    const data = try std.fs.cwd().readFileAlloc(allocator, filepath, 64 * 1024);
+    defer allocator.free(data);
 
     var ines = try INes.parse(data);
     const cartridge = try Cartridge.from_ines(allocator, &ines);
@@ -47,8 +47,6 @@ pub fn main() !void {
 
     var running = true;
     while (running) {
-        // var key: [1]u8 = undefined;
-        //_ = try std.fs.File.stdin().read(&key);
         _ = nes.tick();
 
         var event: c.SDL_Event = undefined;
