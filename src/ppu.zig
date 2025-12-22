@@ -232,15 +232,17 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         fn drawSprite(self: *Self) void {
             const x = self.dot - 1;
             for (self.sprites[0..self.sprites_count]) |sprite| {
-                if (sprite.x > x or x > sprite.x + 7) continue;
+                if (sprite.x > x or x > sprite.x +| 7) continue;
                 const bit: u3 = 7 - @as(u3, @truncate(x - sprite.x));
                 const pattern_lsb = (sprite.pattern_lsb >> bit & 1);
                 const pattern_msb = (sprite.pattern_msb >> bit & 1);
-                const color = if (pattern_msb | pattern_lsb == 0)
-                    self.bus.ppu_read_u8(0x3F10)
-                else
-                    self.bus.ppu_read_u8(@as(u16, 0x3F10) | @as(u16, sprite.palette) << 2 | pattern_msb << 1 | pattern_lsb);
-                self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+                if (pattern_msb | pattern_lsb != 0) {
+                    const color = self.bus.ppu_read_u8(@as(u16, 0x3F10) | @as(u16, sprite.palette) << 2 | pattern_msb << 1 | pattern_lsb);
+                    if (self.pixel_buffer[self.pixel_buffer_idx] & 0x03 != 0 and color & 0x03 != 0 and sprite.is_sprite_0) {
+                        self.status.sprite_0_hit = 1;
+                    }
+                    self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+                }
             }
         }
         fn drawNextPixel(self: *Self) void {
