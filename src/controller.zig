@@ -14,10 +14,8 @@ fetch: *const fn () Status,
 shift_register: u8 = 0,
 
 // $4016 write
-pub fn write(self: *Self, value: u8) void {
-    if (value & 1 == 1) {
-        self.shift_register = @bitCast(self.fetch());
-    }
+pub fn write(self: *Self, _: u8) void {
+    self.shift_register = @bitCast(self.fetch());
 }
 
 // $4016 read

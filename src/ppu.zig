@@ -53,6 +53,15 @@ const Sprite = packed struct {
     };
 };
 
+const EvaluatedSprite = struct {
+    x: u8,
+    priority: u1,
+    palette: u2,
+    pattern_lsb: u8,
+    pattern_msb: u8,
+    is_sprite_0: bool,
+};
+
 const PPUADDR = packed struct(u16) {
     lo: u8 = 0,
     hi: u8 = 0,
@@ -138,7 +147,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         oamaddr: u8 = 0,
 
         oam: [256]Sprite = .{Sprite{}} ** 256,
-        oam_buffer: [8]Sprite = undefined,
+        sprites: [8]EvaluatedSprite = undefined,
+        sprites_count: u8 = 0,
 
         latch: u8 = 0,
         ppudata_read_latch: u8 = 0,
@@ -184,11 +194,13 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         fn incY(self: *Self) void {
             self.v.fine_y_scroll +%= 1;
             if (self.v.fine_y_scroll == 0) {
-                if (self.v.coarse_y_scroll == 29) {
-                    self.v.coarse_y_scroll = 0;
-                    self.v.nametable ^= 2;
-                } else {
-                    self.v.coarse_y_scroll +%= 1;
+                switch (self.v.coarse_y_scroll) {
+                    29 => {
+                        self.v.coarse_y_scroll = 0;
+                        self.v.nametable ^= 2;
+                    },
+                    31 => self.v.coarse_y_scroll = 0,
+                    else => self.v.coarse_y_scroll +%= 1,
                 }
             }
         }
@@ -203,7 +215,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         fn patternAddress(self: *Self, index: u8, plane: u1) u16 {
             return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
         }
-        fn drawNextPixel(self: *Self) void {
+        fn drawBackground(self: *Self) void {
             const pattern_mask: u8 = @as(u8, 1) << (7 - self.x);
             const pattern_msb: u2 = @intFromBool(self.context.pattern_msb & pattern_mask != 0);
             const pattern_lsb: u2 = @intFromBool(self.context.pattern_lsb & pattern_mask != 0);
@@ -216,6 +228,24 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 self.bus.ppu_read_u8(@as(u16, 0x3F00) | palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb);
 
             self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+        }
+        fn drawSprite(self: *Self) void {
+            const x = self.dot - 1;
+            for (self.sprites[0..self.sprites_count]) |sprite| {
+                if (sprite.x > x or x > sprite.x + 7) continue;
+                const bit: u3 = 7 - @as(u3, @truncate(x - sprite.x));
+                const pattern_lsb = (sprite.pattern_lsb >> bit & 1);
+                const pattern_msb = (sprite.pattern_msb >> bit & 1);
+                const color = if (pattern_msb | pattern_lsb == 0)
+                    self.bus.ppu_read_u8(0x3F10)
+                else
+                    self.bus.ppu_read_u8(@as(u16, 0x3F10) | @as(u16, sprite.palette) << 2 | pattern_msb << 1 | pattern_lsb);
+                self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+            }
+        }
+        fn drawNextPixel(self: *Self) void {
+            self.drawBackground();
+            self.drawSprite();
             self.pixel_buffer_idx +%= 1;
             self.shift_registers();
         }
@@ -233,6 +263,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     return self.latch;
                 },
                 4 => {
+                    if (self.dot <= 64) return 0xFF;
                     self.latch = self.oamBytes()[self.oamaddr];
                     return self.latch;
                 },
@@ -340,10 +371,61 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             self.context.palette_msb = (self.context.palette_msb << 1) | self.context.next_tile_palette_msb;
         }
 
-        fn fetch_sprite_phase_tick(self: *Self) void {
-            switch (self.dot % 8) {
-                else => {},
+        fn fetch_sprites(self: *Self) void {
+            const y: u16 = self.scanline;
+            const y_min: u16 = y -| @as(u16, if (self.ctrl.sprite_size == 0) 8 else 16) + 1;
+
+            self.status.sprite_overflow = 0;
+            self.sprites_count = 0;
+            for (self.oam, 0..) |sprite, idx| {
+                if (y_min <= sprite.y and sprite.y <= y) {
+                    if (self.sprites_count == 8) {
+                        // here we don't reproduce the split overflow bug (https://www.nesdev.org/wiki/PPU_sprite_evaluation#Sprite_overflow_bug)
+                        self.status.sprite_overflow = 1;
+                        break;
+                    } else {
+                        self.sprites[self.sprites_count] = self.evaluate_sprite(sprite, idx);
+                        self.sprites_count += 1;
+                    }
+                }
             }
+        }
+
+        fn evaluate_sprite(self: *Self, sprite: Sprite, idx: usize) EvaluatedSprite {
+            var base_address: u16 = undefined;
+            var tile_index: u8 = undefined;
+            var sprite_row_number: u8 = undefined;
+
+            switch (self.ctrl.sprite_size) {
+                0 => {
+                    base_address = 0x1000 * @as(u16, self.ctrl.sprite_pattern_table_address);
+                    tile_index = @bitCast(sprite.tile);
+                    sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
+                        0 => self.scanline - sprite.y,
+                        1 => 8 - (self.scanline - sprite.y),
+                    });
+                },
+                1 => {
+                    base_address = 0x1000 * @as(u16, sprite.tile.bank);
+                    tile_index = @as(u8, @bitCast(sprite.tile)) & 0xFE | @as(u8, if (sprite_row_number >= 8) 1 else 0);
+                    sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
+                        0 => self.scanline - sprite.y,
+                        1 => 16 - (self.scanline - sprite.y),
+                    });
+                },
+            }
+            const address = base_address + @as(u16, tile_index) * 16 + sprite_row_number;
+            const pattern_lsb = self.bus.ppu_read_u8(address);
+            const pattern_msb = self.bus.ppu_read_u8(address + 8);
+
+            return .{
+                .x = sprite.x,
+                .palette = sprite.attribue.palette,
+                .pattern_lsb = if (sprite.attribue.flip_horizontally == 1) @bitReverse(pattern_lsb) else pattern_lsb,
+                .pattern_msb = if (sprite.attribue.flip_horizontally == 1) @bitReverse(pattern_msb) else pattern_msb,
+                .priority = sprite.attribue.priority,
+                .is_sprite_0 = idx == 0,
+            };
         }
 
         pub fn visible_scanline(self: *Self) void {
@@ -368,9 +450,16 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     self.v.coarse_x_scroll = self.t.coarse_x_scroll;
                     self.v.nametable = (self.v.nametable & 2) | (self.t.nametable & 1);
                 },
-                258...279 => {},
+                258...260 => {},
+                // It seems very unlikely that games would deliberately do bank switching between sprites so we do it all in one go.
+                // This is done at dot 261 so that MMC3's scanline counter is triggered at the right time.
+                261 => if (self.scanline != 261) {
+                    self.fetch_sprites();
+                },
+                262...279 => {},
                 280...304 => if (self.scanline == 261) {
                     self.v.coarse_y_scroll = self.t.coarse_y_scroll;
+                    self.v.fine_y_scroll = self.t.fine_y_scroll;
                 },
                 305...320 => {},
                 321...336 => {
