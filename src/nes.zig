@@ -71,10 +71,7 @@ pub inline fn ppu_read_u8(self: *Self, address: u16) u8 {
 
 pub inline fn ppu_write_u8(self: *Self, address: u16, value: u8) void {
     switch (address & 0xFF00) {
-        0x3F00 => {
-            std.log.debug("Write at palette @{X:04} <- {X:02}", .{ address, value });
-            self.palette[map_palette_address(address)] = value;
-        },
+        0x3F00 => self.palette[map_palette_address(address)] = value,
         else => self.cartridge.ppu_write_u8(address, value),
     }
 }

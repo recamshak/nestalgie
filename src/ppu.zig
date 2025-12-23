@@ -7,15 +7,15 @@ const PPUCTRL = packed struct {
     background_pattern_table_address: u1 = 0,
     sprite_size: u1 = 0,
     ppu_master_slave: u1 = 0,
-    vblank_nmi_enabled: u1 = 0,
+    vblank_nmi_enabled: bool = false,
 };
 
-const PPUMASK = packed struct {
+const PPUMASK = packed struct(u8) {
     greyscale: u1 = 0,
-    show_background_in_leftmost_8_pixels: u1 = 0,
-    show_sprite_in_leftmost_8_pixels: u1 = 0,
-    enable_backgroud_rendering: u1 = 0,
-    enable_sprite_rendering: u1 = 0,
+    show_background_in_leftmost_8_pixels: bool = false,
+    show_sprite_in_leftmost_8_pixels: bool = false,
+    enable_backgroud_rendering: bool = false,
+    enable_sprite_rendering: bool = false,
     emphasize_red: u1 = 0,
     emphasize_green: u1 = 0,
     emphasize_blue: u1 = 0,
@@ -139,7 +139,6 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         t: VRAMADDR = .{},
         x: u3 = 0,
         w: u1 = 0,
-        nmi_output: u1 = 0,
 
         ctrl: PPUCTRL = .{},
         mask: PPUMASK = .{},
@@ -166,7 +165,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         palette_msb_buffer: RingBuffer(1, u1) = .{},
 
         pixel_buffer: [256]u6 = .{0} ** 256,
-        pixel_buffer_idx: u8 = 0,
+        pixel_transparent: [256]bool = @splat(true),
         draw: *const fn (y: u8, pixels: [256]u6) void,
         context: RenderingContext = .{},
 
@@ -216,21 +215,32 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
         }
         fn drawBackground(self: *Self) void {
+            const x = self.dot - 1;
+            if (x <= 7 and !self.mask.show_background_in_leftmost_8_pixels) {
+                self.pixel_buffer[x] = @truncate(self.bus.ppu_read_u8(0x3F00));
+                self.pixel_transparent[x] = true;
+                return;
+            }
             const pattern_mask: u8 = @as(u8, 1) << (7 - self.x);
             const pattern_msb: u2 = @intFromBool(self.context.pattern_msb & pattern_mask != 0);
             const pattern_lsb: u2 = @intFromBool(self.context.pattern_lsb & pattern_mask != 0);
             const palette_msb: u4 = @intFromBool(self.context.palette_msb & pattern_mask != 0);
             const palette_lsb: u4 = @intFromBool(self.context.palette_lsb & pattern_mask != 0);
+            const is_transparent = pattern_msb | pattern_lsb == 0;
 
-            const color = if (pattern_msb | pattern_lsb == 0)
+            const color = if (is_transparent)
                 self.bus.ppu_read_u8(0x3F00)
             else
                 self.bus.ppu_read_u8(@as(u16, 0x3F00) | palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb);
 
-            self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+            self.pixel_buffer[x] = @truncate(color);
+            self.pixel_transparent[x] = is_transparent;
         }
         fn drawSprite(self: *Self) void {
             const x = self.dot - 1;
+            if (x <= 7 and !self.mask.show_sprite_in_leftmost_8_pixels) return;
+            const background_color = self.pixel_buffer[x];
+            const is_background_opaque = !self.pixel_transparent[x];
             for (self.sprites[0..self.sprites_count]) |sprite| {
                 if (sprite.x > x or x > sprite.x +| 7) continue;
                 const bit: u3 = 7 - @as(u3, @truncate(x - sprite.x));
@@ -238,21 +248,25 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 const pattern_msb = (sprite.pattern_msb >> bit & 1);
                 if (pattern_msb | pattern_lsb != 0) {
                     const color = self.bus.ppu_read_u8(@as(u16, 0x3F10) | @as(u16, sprite.palette) << 2 | pattern_msb << 1 | pattern_lsb);
-                    if (self.pixel_buffer[self.pixel_buffer_idx] & 0x03 != 0 and color & 0x03 != 0 and sprite.is_sprite_0) {
+                    if (sprite.is_sprite_0 and self.mask.enable_backgroud_rendering and is_background_opaque and (pattern_lsb | pattern_msb != 0)) {
                         self.status.sprite_0_hit = 1;
                     }
-                    self.pixel_buffer[self.pixel_buffer_idx] = @truncate(color);
+                    if (sprite.priority == 1 and is_background_opaque) {
+                        self.pixel_buffer[x] = background_color;
+                    } else {
+                        self.pixel_buffer[x] = @truncate(color);
+                    }
+                    break;
                 }
             }
         }
         fn drawNextPixel(self: *Self) void {
             self.drawBackground();
-            self.drawSprite();
-            self.pixel_buffer_idx +%= 1;
+            if (self.scanline != 0 and self.mask.enable_sprite_rendering) self.drawSprite();
             self.shift_registers();
         }
         fn renderingEnabled(self: *Self) bool {
-            return (self.mask.enable_backgroud_rendering | self.mask.enable_sprite_rendering) != 0;
+            return self.mask.enable_backgroud_rendering or self.mask.enable_sprite_rendering;
         }
 
         pub inline fn read_u8(self: *Self, address: u16) u8 {
@@ -260,7 +274,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 2 => {
                     self.latch = @as(u8, @bitCast(self.status)) & 0xE0;
                     self.w = 0;
-                    self.ctrl.vblank_nmi_enabled = 0;
+                    self.status.vblank = 0;
                     self.cpu.set_nmi(0);
                     return self.latch;
                 },
@@ -286,8 +300,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     self.ctrl = @bitCast(value);
                     self.pattern_base_address = if (self.ctrl.background_pattern_table_address == 0) 0x0000 else 0x1000;
                     self.t.nametable = self.ctrl.base_nametable_address;
-                    self.nmi_output = self.ctrl.vblank_nmi_enabled;
-                    if (self.nmi_output == 0 or self.ctrl.vblank_nmi_enabled == 0) self.cpu.set_nmi(0);
+                    if (!self.ctrl.vblank_nmi_enabled) self.cpu.set_nmi(0);
                 },
 
                 1 => self.mask = @bitCast(value),
@@ -404,7 +417,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     tile_index = @bitCast(sprite.tile);
                     sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
                         0 => self.scanline - sprite.y,
-                        1 => 8 - (self.scanline - sprite.y),
+                        1 => 7 - (self.scanline - sprite.y),
                     });
                 },
                 1 => {
@@ -412,7 +425,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     tile_index = @as(u8, @bitCast(sprite.tile)) & 0xFE | @as(u8, if (sprite_row_number >= 8) 1 else 0);
                     sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
                         0 => self.scanline - sprite.y,
-                        1 => 16 - (self.scanline - sprite.y),
+                        1 => 15 - (self.scanline - sprite.y),
                     });
                 },
             }
@@ -455,7 +468,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 258...260 => {},
                 // It seems very unlikely that games would deliberately do bank switching between sprites so we do it all in one go.
                 // This is done at dot 261 so that MMC3's scanline counter is triggered at the right time.
-                261 => if (self.scanline != 261) {
+                261 => if (self.scanline != 261 and self.mask.enable_sprite_rendering) {
                     self.fetch_sprites();
                 },
                 262...279 => {},
@@ -479,16 +492,14 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             }
 
             if (self.dot == 1 and self.scanline == 261) {
-                self.ctrl.vblank_nmi_enabled = 0;
                 self.status.vblank = 0;
                 self.status.sprite_0_hit = 0;
                 self.status.sprite_overflow = 0;
                 self.cpu.set_nmi(0);
             }
             if (self.dot == 1 and self.scanline == 241) {
-                self.ctrl.vblank_nmi_enabled = 1;
                 self.status.vblank = 1;
-                self.cpu.set_nmi(self.nmi_output);
+                self.cpu.set_nmi(@intFromBool(self.ctrl.vblank_nmi_enabled));
             }
 
             self.dot = (self.dot + 1) % 341;
