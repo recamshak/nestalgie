@@ -415,8 +415,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             switch (self.dot) {
                 0 => {},
                 1...255 => {
-                    self.fetch_tile_phase_tick();
                     self.drawNextPixel();
+                    self.fetch_tile_phase_tick();
                 },
                 256 => {
                     self.fetch_tile_phase_tick();
@@ -443,8 +443,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 },
                 305...320 => {},
                 321...336 => {
-                    self.fetch_tile_phase_tick();
                     self.shift_registers();
+                    self.fetch_tile_phase_tick();
                 },
                 337...340 => {},
                 else => unreachable,
