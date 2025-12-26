@@ -85,40 +85,6 @@ const VRAMADDR = packed struct(u16) {
     }
 };
 
-fn RingBuffer(comptime capacity: u8, Type: type) type {
-    return struct {
-        const Self = @This();
-        buffer: [capacity]Type = undefined,
-        head_index: u8 = 0,
-        len: u8 = 0,
-
-        pub fn append(self: *Self, value: Type) void {
-            if (self.len == capacity) {
-                self.buffer[self.head_index] = value;
-                self.head_index = (self.head_index + 1) % capacity;
-            } else {
-                self.buffer[(self.head_index + self.len) % capacity] = value;
-                self.len += 1;
-            }
-        }
-        pub fn pop_head(self: *Self) Type {
-            if (self.len == 0) return 0;
-            const value = self.buffer[self.head_index];
-            self.head_index = (self.head_index + 1) % capacity;
-            self.len -= 1;
-            return value;
-        }
-        pub fn head(self: *Self) Type {
-            if (self.len == 0) return 0;
-            return self.buffer[self.head_index];
-        }
-        pub fn tail(self: *Self) Type {
-            if (self.len == 0) return 0;
-            return self.buffer[self.head_index + self.len - 1];
-        }
-    };
-}
-
 const RenderingContext = struct {
     next_tile_pattern_lsb: u8 = 0,
     next_tile_pattern_msb: u8 = 0,
@@ -158,11 +124,11 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
 
         pattern_base_address: u16 = 0,
 
-        nametable_buffer: RingBuffer(1, u8) = .{},
-        pattern_lsb_buffer: RingBuffer(1, u8) = .{},
-        pattern_msb_buffer: RingBuffer(1, u8) = .{},
-        palette_lsb_buffer: RingBuffer(1, u1) = .{},
-        palette_msb_buffer: RingBuffer(1, u1) = .{},
+        next_nametable: u8 = undefined,
+        next_pattern_lsb: u8 = undefined,
+        next_pattern_msb: u8 = undefined,
+        next_palette_lsb: u1 = undefined,
+        next_palette_msb: u1 = undefined,
 
         pixel_buffer: [256]u6 = .{0} ** 256,
         pixel_transparent: [256]bool = @splat(true),
@@ -345,32 +311,31 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 // fetch NT
                 1 => {
                     const val = self.bus.ppu_read_u8(self.tileAddress());
-                    self.nametable_buffer.append(val);
+                    self.next_nametable = val;
                 },
                 // fetch AT
                 3 => {
                     const attribute = self.bus.ppu_read_u8(self.attributeAddress());
                     const attribute_lsb_index: u3 = @truncate((self.v.coarse_y_scroll & 2) << 1 | (self.v.coarse_x_scroll & 2));
                     const mask = @as(u8, 1) << attribute_lsb_index;
-                    self.palette_lsb_buffer.append(@bitCast(attribute & mask != 0));
-                    self.palette_msb_buffer.append(@bitCast(attribute & (mask << 1) != 0));
+                    self.next_palette_lsb = @bitCast(attribute & mask != 0);
+                    self.next_palette_msb = @bitCast(attribute & (mask << 1) != 0);
                 },
                 // fetch pattern lsb
-                5 => self.pattern_lsb_buffer.append(self.bus.ppu_read_u8(self.patternAddress(
-                    self.nametable_buffer.head(),
+                5 => self.next_pattern_lsb = self.bus.ppu_read_u8(self.patternAddress(
+                    self.next_nametable,
                     0,
-                ))),
+                )),
                 // fetch pattern msb
-                7 => self.pattern_msb_buffer.append(self.bus.ppu_read_u8(self.patternAddress(
-                    self.nametable_buffer.head(),
+                7 => self.next_pattern_msb = self.bus.ppu_read_u8(self.patternAddress(
+                    self.next_nametable,
                     1,
-                ))),
+                )),
                 0 => {
-                    _ = self.nametable_buffer.pop_head();
-                    self.context.next_tile_pattern_lsb = self.pattern_lsb_buffer.pop_head();
-                    self.context.next_tile_pattern_msb = self.pattern_msb_buffer.pop_head();
-                    self.context.next_tile_palette_lsb = self.palette_lsb_buffer.pop_head();
-                    self.context.next_tile_palette_msb = self.palette_msb_buffer.pop_head();
+                    self.context.next_tile_pattern_lsb = self.next_pattern_lsb;
+                    self.context.next_tile_pattern_msb = self.next_pattern_msb;
+                    self.context.next_tile_palette_lsb = self.next_palette_lsb;
+                    self.context.next_tile_palette_msb = self.next_palette_msb;
                     self.incCoarseX();
                 },
                 else => {},
