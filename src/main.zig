@@ -78,6 +78,16 @@ pub fn main() !void {
                 c.SDL_EVENT_QUIT => {
                     running = false;
                 },
+                c.SDL_EVENT_KEY_UP => {
+                    if (event.key.scancode == c.SDL_SCANCODE_Y) {
+                        var filename_buffer: [64]u8 = undefined;
+                        var tv: std.posix.timeval = undefined;
+                        std.posix.gettimeofday(&tv, null);
+                        const filename = try std.fmt.bufPrintZ(&filename_buffer, "screenshot-{}.{d:0>6}.bmp", .{ tv.sec, @as(u32, @intCast(tv.usec)) });
+                        const s = c.SDL_CreateSurfaceFrom(256, 240, c.SDL_PIXELFORMAT_XBGR8888, &display.frame_buffer, 256 * 4);
+                        _ = c.SDL_SaveBMP(s, filename);
+                    }
+                },
                 else => {},
             }
         }
