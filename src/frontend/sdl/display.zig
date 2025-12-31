@@ -35,14 +35,14 @@ pub fn init() !Self {
         std.log.err("Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
-    if (!c.SDL_CreateWindowAndRenderer("Nestalgie", 1024, 840, c.SDL_WINDOW_RESIZABLE, &display.window, &display.renderer)) {
+    if (!c.SDL_CreateWindowAndRenderer("Nestalgie", 1024, 786, c.SDL_WINDOW_RESIZABLE, &display.window, &display.renderer)) {
         std.log.err("Couldn't create window and renderer: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
     errdefer c.SDL_DestroyWindow(display.window);
     errdefer c.SDL_DestroyRenderer(display.renderer);
     _ = c.SDL_SetRenderVSync(display.renderer, 1);
-    if (!c.SDL_SetRenderLogicalPresentation(display.renderer, 640, 480, c.SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+    if (!c.SDL_SetRenderLogicalPresentation(display.renderer, 1024, 840, c.SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
         std.log.err("Couldn't setup renderer: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
@@ -52,6 +52,7 @@ pub fn init() !Self {
         std.log.err("Couldn't create screen texture: {s}", .{c.SDL_GetError()});
         return DisplayError.InitError;
     }
+    _ = c.SDL_SetTextureScaleMode(display.screen_texture, c.SDL_SCALEMODE_NEAREST);
     return display;
 }
 

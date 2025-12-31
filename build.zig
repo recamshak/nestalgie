@@ -1,4 +1,8 @@
 const std = @import("std");
+const Frontend = enum {
+    SDL,
+    ESP_IDF,
+};
 
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
@@ -20,6 +24,10 @@ pub fn build(b: *std.Build) void {
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
+
+    const frontend: Frontend =
+        b.option(Frontend, "frontend", "Frontend") orelse
+        if (std.mem.startsWith(u8, target.result.cpu.model.name, "esp32")) Frontend.ESP_IDF else Frontend.SDL;
 
     const tracy_enable =
         b.option(bool, "tracy_enable", "Enable profiling") orelse
@@ -49,6 +57,9 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
+        .imports = &.{
+            .{ .name = "tracy", .module = tracy.module("tracy") },
+        },
     });
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -72,7 +83,10 @@ pub fn build(b: *std.Build) void {
             // b.createModule defines a new module just like b.addModule but,
             // unlike b.addModule, it does not expose the module to consumers of
             // this package, which is why in this case we don't have to give it a name.
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = switch (frontend) {
+                .SDL => b.path("src/frontend/sdl/main.zig"),
+                .ESP_IDF => b.path("src/frontend/esp-idf/main.zig"),
+            },
             // Target and optimization levels must be explicitly wired in when
             // defining an executable or library (in the root module), and you
             // can also hardcode a specific target for an executable or library
@@ -94,11 +108,12 @@ pub fn build(b: *std.Build) void {
     });
     if (tracy_enable) {
         exe.linkLibrary(tracy.artifact("tracy"));
+        mod.linkLibrary(tracy.artifact("tracy"));
     }
-    exe.linkSystemLibrary("SDL3");
-
-    // Link libc (required for C interop)
-    exe.linkLibC();
+    if (frontend == .SDL) {
+        exe.linkSystemLibrary("SDL3");
+        exe.linkLibC();
+    }
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default

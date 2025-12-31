@@ -1,16 +1,8 @@
 const std = @import("std");
 const tracy = @import("tracy");
-const nestalgie = @import("nestalgie");
 
-const Cartridge = @import("./cartridge.zig").Cartridge;
-const NROM = @import("./mapper/nrom.zig").NROM;
-const CPU = @import("./cpu.zig");
-const PPU = @import("./ppu.zig").PPU;
-const APU = @import("./apu.zig").APU;
-const Nes = @import("./nes.zig");
-const INes = @import("./ines.zig");
-const Display = @import("./io/display.zig");
-const Controller = @import("controller.zig");
+const nestalgie = @import("nestalgie");
+const Display = @import("./display.zig");
 const c = @cImport({
     @cInclude("SDL3/SDL.h");
 });
@@ -40,7 +32,7 @@ pub fn main() !void {
         }
     }.call;
     const fetchController1 = struct {
-        fn call() Controller.Status {
+        fn call() nestalgie.Controller.Status {
             return .{
                 .a = @intFromBool(keyboard_state[c.SDL_SCANCODE_J]),
                 .b = @intFromBool(keyboard_state[c.SDL_SCANCODE_K]),
@@ -58,9 +50,9 @@ pub fn main() !void {
     const data = try std.fs.cwd().readFileAlloc(allocator, filepath, 64 * 1024);
     defer allocator.free(data);
 
-    var ines = try INes.parse(data);
-    const cartridge = try Cartridge.from_ines(allocator, &ines);
-    var nes = try Nes.create(
+    var ines = try nestalgie.INes.parse(data);
+    const cartridge = try nestalgie.Cartridge.from_ines(allocator, &ines);
+    var nes = try nestalgie.Nes.create(
         allocator,
         draw,
         fetchController1,
