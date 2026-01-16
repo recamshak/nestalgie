@@ -97,7 +97,7 @@ const RenderingContext = struct {
     palette_msb: u8 = 0, // bit 3
 };
 
-pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
+pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
     return struct {
         const Self = @This();
 
@@ -118,7 +118,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         latch: u8 = 0,
         ppudata_read_latch: u8 = 0,
 
-        scanline: u16 = 261,
+        scanline: u16 = 0,
         dot: u16 = 0,
         is_odd_frame: bool = false,
 
@@ -130,13 +130,14 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         next_palette_lsb: u1 = undefined,
         next_palette_msb: u1 = undefined,
 
-        pixel_buffer: [256]u6 = .{0} ** 256,
+        pixel_buffer: [256]Color = .{0} ** 256,
         pixel_transparent: [256]bool = @splat(true),
-        draw: *const fn (y: u8, pixels: [256]u6) void,
+        draw: *const fn (y: u8, pixels: [256]Color) void,
         context: RenderingContext = .{},
 
         bus: *Bus,
         cpu: *Cpu,
+        system_palette: [64]Color,
 
         inline fn oamBytes(self: *Self) [*]u8 {
             return @ptrCast(&self.oam);
@@ -183,7 +184,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         fn drawBackground(self: *Self) void {
             const x = self.dot - 1;
             if (x <= 7 and !self.mask.show_background_in_leftmost_8_pixels) {
-                self.pixel_buffer[x] = @truncate(self.bus.ppu_read_u8(0x3F00));
+                self.pixel_buffer[x] = self.system_palette[self.bus.ppu_read_u8(0x3F00)];
                 self.pixel_transparent[x] = true;
                 return;
             }
@@ -199,7 +200,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             else
                 self.bus.ppu_read_u8(@as(u16, 0x3F00) | palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb);
 
-            self.pixel_buffer[x] = @truncate(color);
+            self.pixel_buffer[x] = self.system_palette[color];
             self.pixel_transparent[x] = is_transparent;
         }
         fn drawSprite(self: *Self) void {
@@ -220,7 +221,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                     if (sprite.priority == 1 and is_background_opaque) {
                         self.pixel_buffer[x] = background_color;
                     } else {
-                        self.pixel_buffer[x] = @truncate(color);
+                        self.pixel_buffer[x] = self.system_palette[color];
                     }
                     break;
                 }
@@ -409,9 +410,6 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
         }
 
         pub fn visible_scanline(self: *Self) void {
-            if (self.scanline == 0 and self.dot == 0 and self.is_odd_frame) {
-                self.dot = 1;
-            }
             switch (self.dot) {
                 0 => {},
                 1...255 => {
@@ -455,16 +453,15 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
             if (self.renderingEnabled() and (self.scanline == 261 or self.scanline <= 239)) {
                 self.visible_scanline();
             }
-
+            if (self.dot == 1 and self.scanline == 241) {
+                self.status.vblank = 1;
+                self.cpu.set_nmi(@intFromBool(self.ctrl.vblank_nmi_enabled));
+            }
             if (self.dot == 1 and self.scanline == 261) {
                 self.status.vblank = 0;
                 self.status.sprite_0_hit = 0;
                 self.status.sprite_overflow = 0;
                 self.cpu.set_nmi(0);
-            }
-            if (self.dot == 1 and self.scanline == 241) {
-                self.status.vblank = 1;
-                self.cpu.set_nmi(@intFromBool(self.ctrl.vblank_nmi_enabled));
             }
 
             self.dot = (self.dot + 1) % 341;
@@ -472,6 +469,9 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type) type {
                 self.scanline = (self.scanline + 1) % 262;
                 if (self.scanline == 0) {
                     self.is_odd_frame = !self.is_odd_frame;
+                    if (self.is_odd_frame) {
+                        self.dot = 1;
+                    }
                 }
             }
         }

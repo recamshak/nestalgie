@@ -3,6 +3,7 @@ const tracy = @import("tracy");
 
 const nestalgie = @import("nestalgie");
 const Display = @import("./display.zig");
+const Audio = @import("./audio.zig");
 const c = @cImport({
     @cInclude("SDL3/SDL.h");
 });
@@ -11,6 +12,7 @@ var buffer: [128 * 1024]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&buffer);
 var allocator = fba.allocator();
 var display = Display{};
+var audio: Audio = undefined;
 var keyboard_state: [*c]const bool = undefined;
 pub const log_level: std.log.Level = .err;
 
@@ -21,14 +23,17 @@ pub fn main() !void {
     defer display.deinit();
     keyboard_state = c.SDL_GetKeyboardState(0);
 
+    audio = try Audio.init();
+
     const draw = struct {
-        fn call(y: u8, scanline: [256]u6) void {
-            if (y == 0) {
-                display.render() catch unreachable;
-                tracy.frameMark();
-            }
-            display.draw(y, scanline) catch unreachable;
-            tracy.frameMarkNamed("scanline");
+        fn call(y: u8, scanline: [256]u32) void {
+            display.draw(y, scanline);
+        }
+    }.call;
+
+    const sampleHandler = struct {
+        fn call(sample: u8) void {
+            audio.queueSample(sample);
         }
     }.call;
     const fetchController1 = struct {
@@ -52,9 +57,11 @@ pub fn main() !void {
 
     var ines = try nestalgie.INes.parse(data);
     const cartridge = try nestalgie.Cartridge.from_ines(allocator, &ines);
-    var nes = try nestalgie.Nes.create(
+    var nes = try nestalgie.Nes.Nes(u32).create(
         allocator,
         draw,
+        sampleHandler,
+        display.palette,
         fetchController1,
         cartridge,
     );
@@ -62,7 +69,9 @@ pub fn main() !void {
 
     var running = true;
     while (running) {
-        _ = nes.tick();
+        nes.run_one_frame();
+        display.render() catch unreachable;
+        tracy.frameMark();
 
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {

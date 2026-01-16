@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.ines);
 const TvSystem = enum(u1) {
     NTSC = 0,
     PAL = 1,
@@ -66,10 +67,10 @@ pub const INes = struct {
 
 pub fn parse(bytes: []u8) !INes {
     const header = std.mem.bytesAsValue(Header, bytes).*;
-    std.log.info("magic number: {X}", .{header.magic_number});
-    std.log.info("prg rom size: {d}", .{header.prg_rom_size});
-    std.log.info("chr rom size: {d}", .{header.chr_rom_size});
-    std.log.info("header size: {d}", .{@sizeOf(Header)});
+    log.info("magic number: {X}", .{header.magic_number});
+    log.info("prg rom size: {d}", .{header.prg_rom_size});
+    log.info("chr rom size: {d}", .{header.chr_rom_size});
+    log.info("header size: {d}", .{@sizeOf(Header)});
     const prg_rom_start = @sizeOf(Header);
     const prg_rom_end = prg_rom_start + 16384 * @as(u16, header.prg_rom_size);
     const chr_rom_start = prg_rom_end;

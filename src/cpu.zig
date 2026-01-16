@@ -50,10 +50,14 @@ pub fn Nes6502(comptime Bus: type) type {
             self.nmi = value;
         }
 
+        pub fn set_irq(self: *Self, value: u1) void {
+            self.irq = value;
+        }
+
         const stp = Operation{ op_stp, null, 0 };
         const not_supported = Operation{ op_not_supported, null, 0 };
 
-        var op_table: [256]Operation = [_]Operation{
+        const op_table: [256]Operation = [_]Operation{
             // 0x00
             Operation{ op_brk, null, 7 },
             Operation{ op_ora, @"(indirect,x) mode", 6 },

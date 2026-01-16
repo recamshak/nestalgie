@@ -62,11 +62,8 @@ pub fn deinit(self: *Self) void {
     c.SDL_DestroyWindow(self.window);
 }
 
-pub fn draw(self: *Self, y: u8, scanline: [256]u6) !void {
-    var row = self.frame_buffer[@as(usize, y) * 256 ..];
-    for (0..256) |i| {
-        row[i] = self.palette[scanline[i]];
-    }
+pub fn draw(self: *Self, y: u8, scanline: [256]u32) void {
+    @memcpy(self.frame_buffer[@as(usize, y) * 256 .. @as(usize, y + 1) * 256], &scanline);
 }
 
 pub fn render(self: *Self) !void {
