@@ -118,7 +118,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
         latch: u8 = 0,
         ppudata_read_latch: u8 = 0,
 
-        scanline: u16 = 0,
+        scanline: u16 = 261,
         dot: u16 = 0,
         is_odd_frame: bool = false,
 
@@ -176,7 +176,6 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
         fn attributeAddress(self: *Self) u16 {
             const v = self.v.asWord();
             return 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
-            //return 0x23C0 | (@as(u16, self.v.nametable) << 10) | ((self.v.coarse_y_scroll >> 2) << 3) | (self.v.coarse_x_scroll >> 2);
         }
         fn patternAddress(self: *Self, index: u8, plane: u1) u16 {
             return self.pattern_base_address | @as(u16, index) << 4 | @as(u16, plane) << 3 | self.v.fine_y_scroll;
@@ -260,6 +259,13 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
                 else => return self.latch,
             }
         }
+
+        pub fn dmaCopy(self: *Self, data: []u8) void {
+            std.debug.assert(data.len >= 256);
+            std.debug.assert(self.oamaddr == 0);
+            @memcpy(self.oamBytes()[0..], data[0..256]);
+        }
+
         pub inline fn write_u8(self: *Self, address: u16, value: u8) void {
             switch (address & 0x0007) {
                 // 0x2000 PPUCTRL write

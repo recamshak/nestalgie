@@ -33,6 +33,12 @@ pub const Cartridge = union(enum) {
         }
     }
 
+    pub fn getPointer(self: *Cartridge, address: u16) []u8 {
+        return switch (self.*) {
+            inline else => |*m| m.getPointer(address),
+        };
+    }
+
     pub fn from_ines(allocator: std.mem.Allocator, ines: *const INes) !Cartridge {
         switch (ines.mapper_id()) {
             0 => return .{ .nrom = try NROM.from_ines(allocator, ines) },

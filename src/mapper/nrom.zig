@@ -29,6 +29,10 @@ pub const NROM = struct {
         }
     }
 
+    pub fn getPointer(self: *NROM, address: u16) []u8 {
+        return self.prg_rom[address & self.address_mask ..];
+    }
+
     pub fn from_ines(allocator: std.mem.Allocator, ines: *const INes) !NROM {
         const chr_rom = if (ines.chr_rom.len == 0) try allocator.alloc(u8, 8096) else ines.chr_rom;
         const vram = try allocator.alloc(u8, 2048);

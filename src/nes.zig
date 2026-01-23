@@ -40,9 +40,17 @@ pub fn Nes(comptime Color: type) type {
                 0x4000 => switch (address) {
                     0x4016 => self.controller.readController1(),
                     0x4017 => self.controller.readController2(),
-                    else => self.apu.read_u8(address),
+                    else => 0, // TODO: add missing mappings
                 },
                 else => self.cartridge.read_u8(address),
+            };
+        }
+
+        pub inline fn getPointer(self: *Self, address: u16) []u8 {
+            return switch (address & 0xE000) {
+                0x0000 => return self.internal_ram[address & 0x07FF ..],
+                0x2000, 0x4000 => @panic("Cannot get pointer"),
+                else => self.cartridge.getPointer(address),
             };
         }
 
@@ -59,16 +67,21 @@ pub fn Nes(comptime Color: type) type {
                     0x4005 => self.apu.write_pulse2_sweep(@bitCast(value)),
                     0x4006 => self.apu.write_pulse2_timer_lo(value),
                     0x4007 => self.apu.write_pulse2_timer_hi(@bitCast(value)),
+                    0x4008 => self.apu.write_triangle_ctrl(value),
+                    0x400A => self.apu.write_triangle_timer_lo(value),
+                    0x400B => self.apu.write_triangle_timer_hi(value),
+                    0x400C => self.apu.write_noise_ctrl(@bitCast(value)),
+                    0x400E => self.apu.write_noise_period(@bitCast(value)),
+                    0x400F => self.apu.write_noise_length(@bitCast(value)),
                     0x4014 => {
-                        // move that into PPU and use a pointer since it's from a single page and the CPU is "stopped".
-                        for (0..256) |i| {
-                            const data = self.read_u8(@as(u16, value) << 8 | @as(u16, @truncate(i)));
-                            self.write_u8(0x2004, data);
-                        }
+                        const base_address = @as(u16, value) << 8;
+                        const p = self.getPointer(base_address);
+                        self.ppu.dmaCopy(p);
                         self.additional_cycles = 512;
                     },
+                    0x4015 => self.apu.write_status(@bitCast(value)),
                     0x4016 => self.controller.write(value),
-                    else => self.apu.write_u8(address, value),
+                    else => {},
                 },
                 else => self.cartridge.write_u8(address, value),
             }
@@ -129,6 +142,7 @@ pub fn Nes(comptime Color: type) type {
             defer zone.deinit();
 
             const cpu_cycles = self.cpu.execute_next_op() + self.additional_cycles;
+            self.frame_consumed_cycle_count += cpu_cycles;
             for (0..cpu_cycles) |_| {
                 self.ppu.tick();
                 self.ppu.tick();
@@ -143,10 +157,16 @@ pub fn Nes(comptime Color: type) type {
             defer zone.deinit();
 
             while (self.frame_consumed_cycle_count < self.frame_cycle_count) {
-                self.frame_consumed_cycle_count += self.tick();
+                _ = self.tick();
             }
             self.frame_consumed_cycle_count -= self.frame_cycle_count;
             self.frame_cycle_count ^= 1;
+
+            //std.log.info("Audio samples: {}, ticks: {}, ticks before next: {}", .{ self.apu.sample_count, self.apu.tick_count, self.apu.ticks_before_next_sample });
+            std.debug.assert(self.apu.sample_count == 735);
+            self.apu.sample_count = 0;
+            self.apu.tick_count = 0;
+            self.apu.newFrame();
         }
     };
 }

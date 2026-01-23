@@ -12,7 +12,7 @@ var buffer: [128 * 1024]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&buffer);
 var allocator = fba.allocator();
 var display = Display{};
-var audio: Audio = undefined;
+var audio: Audio = Audio{};
 var keyboard_state: [*c]const bool = undefined;
 pub const log_level: std.log.Level = .err;
 
@@ -23,7 +23,7 @@ pub fn main() !void {
     defer display.deinit();
     keyboard_state = c.SDL_GetKeyboardState(0);
 
-    audio = try Audio.init();
+    try audio.init();
 
     const draw = struct {
         fn call(y: u8, scanline: [256]u32) void {
@@ -70,6 +70,7 @@ pub fn main() !void {
     var running = true;
     while (running) {
         nes.run_one_frame();
+        audio.flush();
         display.render() catch unreachable;
         tracy.frameMark();
 

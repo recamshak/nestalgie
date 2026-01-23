@@ -4,8 +4,8 @@ pub const EnvelopeType = enum {
 };
 
 pub const DecayEnvelope = struct {
-    timer_counter: u4 = 0,
-    timer_reset_counter: u4 = 0,
+    counter: u4 = 0,
+    period: u4 = 0,
     repeat: bool = false,
     volume: u4 = 15,
 };
@@ -18,9 +18,9 @@ pub const Envelope = union(EnvelopeType) {
         switch (self.*) {
             .constant => {},
             .decay => {
-                self.decay.timer_counter -|= 1;
-                if (self.decay.timer_counter == 0) {
-                    self.decay.timer_counter = self.decay.timer_reset_counter + 1;
+                self.decay.counter -|= 1;
+                if (self.decay.counter == 0) {
+                    self.decay.counter = self.decay.period + 1;
                     if (self.decay.volume == 0 and self.decay.repeat) {
                         self.decay.volume = 15;
                     } else {
@@ -36,8 +36,15 @@ pub const Envelope = union(EnvelopeType) {
             .constant => {},
             .decay => {
                 self.decay.volume = 15;
-                self.decay.timer_counter = self.decay.timer_reset_counter;
+                self.decay.counter = self.decay.period;
             },
         }
+    }
+
+    pub fn volume(self: *Envelope) u4 {
+        return switch (self.*) {
+            .constant => self.constant,
+            .decay => self.decay.volume,
+        };
     }
 };
