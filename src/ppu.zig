@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const PPUCTRL = packed struct {
+const PPUCTRL = packed struct(u8) {
     base_nametable_address: u2 = 0,
     vram_address_increment: u1 = 0,
     sprite_pattern_table_address: u1 = 0,
@@ -21,7 +21,7 @@ const PPUMASK = packed struct(u8) {
     emphasize_blue: u1 = 0,
 };
 
-const PPUSTATUS = packed struct {
+const PPUSTATUS = packed struct(u8) {
     ppu_open_bus: u5 = 0,
     sprite_overflow: u1 = 0,
     sprite_0_hit: u1 = 0,
@@ -33,23 +33,23 @@ const PPUSCROLL = packed struct(u8) {
     coarse_scroll: u5,
 };
 
-const Sprite = packed struct {
+const Sprite = packed struct(u32) {
     y: u8 = 0,
     tile: Tile = .{},
     attribue: Attribute = .{},
     x: u8 = 0,
 
-    const Tile = packed struct {
+    const Tile = packed struct(u8) {
         bank: u1 = 0,
         tile_number: u7 = 0,
     };
 
-    const Attribute = packed struct {
+    const Attribute = packed struct(u8) {
         palette: u2 = 0,
         _padding: u3 = 0,
         priority: u1 = 0,
-        flip_horizontally: u1 = 0,
-        flip_vertically: u1 = 0,
+        flip_horizontally: bool = false,
+        flip_vertically: bool = false,
     };
 };
 
@@ -386,30 +386,30 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
             switch (self.ctrl.sprite_size) {
                 0 => {
                     base_address = 0x1000 * @as(u16, self.ctrl.sprite_pattern_table_address);
-                    tile_index = @bitCast(sprite.tile);
                     sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
-                        0 => self.scanline - sprite.y,
-                        1 => 7 - (self.scanline - sprite.y),
+                        true => 7 - (self.scanline - sprite.y),
+                        false => self.scanline - sprite.y,
                     });
+                    tile_index = @bitCast(sprite.tile);
                 },
                 1 => {
                     base_address = 0x1000 * @as(u16, sprite.tile.bank);
-                    tile_index = @as(u8, @bitCast(sprite.tile)) & 0xFE | @as(u8, if (sprite_row_number >= 8) 1 else 0);
                     sprite_row_number = @truncate(switch (sprite.attribue.flip_vertically) {
-                        0 => self.scanline - sprite.y,
-                        1 => 15 - (self.scanline - sprite.y),
+                        true => 15 - (self.scanline - sprite.y),
+                        false => self.scanline - sprite.y,
                     });
+                    tile_index = (@as(u8, sprite.tile.tile_number) << 1) | @as(u8, if (sprite_row_number >= 8) 1 else 0);
                 },
             }
-            const address = base_address + @as(u16, tile_index) * 16 + sprite_row_number;
+            const address = base_address + @as(u16, tile_index) * 16 + (sprite_row_number % 8);
             const pattern_lsb = self.bus.ppu_read_u8(address);
             const pattern_msb = self.bus.ppu_read_u8(address + 8);
 
             return .{
                 .x = sprite.x,
                 .palette = sprite.attribue.palette,
-                .pattern_lsb = if (sprite.attribue.flip_horizontally == 1) @bitReverse(pattern_lsb) else pattern_lsb,
-                .pattern_msb = if (sprite.attribue.flip_horizontally == 1) @bitReverse(pattern_msb) else pattern_msb,
+                .pattern_lsb = if (sprite.attribue.flip_horizontally) @bitReverse(pattern_lsb) else pattern_lsb,
+                .pattern_msb = if (sprite.attribue.flip_horizontally) @bitReverse(pattern_msb) else pattern_msb,
                 .priority = sprite.attribue.priority,
                 .is_sprite_0 = idx == 0,
             };
