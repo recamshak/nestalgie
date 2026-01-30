@@ -1,5 +1,6 @@
 const NROM = @import("mapper/nrom.zig").NROM;
 const MMC1 = @import("mapper/mmc1.zig").MMC1;
+const UXROM = @import("mapper/uxrom.zig").UXROM;
 const INes = @import("ines.zig").INes;
 const std = @import("std");
 
@@ -8,6 +9,7 @@ pub const CartridgeError = error{UnsupportedMapper};
 pub const Cartridge = union(enum) {
     nrom: NROM,
     mmc1: MMC1,
+    uxrom: UXROM,
 
     pub fn read_u8(self: *Cartridge, address: u16) u8 {
         return switch (self.*) {
@@ -42,6 +44,7 @@ pub const Cartridge = union(enum) {
     pub fn from_ines(allocator: std.mem.Allocator, ines: *const INes) !Cartridge {
         switch (ines.mapper_id()) {
             0 => return .{ .nrom = try NROM.from_ines(allocator, ines) },
+            2 => return .{ .uxrom = try UXROM.from_ines(allocator, ines) },
             else => {
                 std.log.err("Unsupported mapper with ID: {d}", .{ines.mapper_id()});
                 return CartridgeError.UnsupportedMapper;

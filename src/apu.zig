@@ -3,6 +3,7 @@ const Pulse = @import("./apu/pulse.zig");
 const Triangle = @import("./apu/triangle.zig");
 const Envelope = @import("./apu/envelope.zig");
 const Noise = @import("./apu/noise.zig");
+const Dmc = @import("./apu/dmc.zig").Dmc;
 
 const EnvelopePayload = packed struct(u6) {
     // if disabled is true then this is the volume, otherwise it's the period
@@ -88,7 +89,7 @@ const length_counters = [32]u8{
 const sampleHandler = *const fn (sample: u8) void;
 const ticks_between_sample: f32 = (1_789_773.0 / 44_100.0) - 0.06;
 
-pub fn APU(comptime Cpu: type) type {
+pub fn APU(comptime Cpu: type, comptime Bus: type) type {
     return struct {
         const Self = @This();
         sample_count: u32 = 0,
@@ -104,10 +105,15 @@ pub fn APU(comptime Cpu: type) type {
         pulse2: Pulse = .{},
         triangle: Triangle = .{},
         noise: Noise = .{},
+        dmc: Dmc(Bus) = .{ .bus = undefined },
 
         cpu: *Cpu,
         sample_handler: sampleHandler,
         ticks_before_next_sample: f32 = ticks_between_sample / 2.0,
+
+        pub fn init(self: *Self, bus: *Bus) void {
+            self.dmc.bus = bus;
+        }
 
         pub fn read_status(_: *Self) void {}
         pub fn write_frame_counter(_: *Self) void {}
@@ -262,6 +268,7 @@ pub fn APU(comptime Cpu: type) type {
             self.pulse1.tick();
             self.pulse2.tick();
             self.noise.tick();
+            self.dmc.tick();
         }
 
         pub fn clock_length_counter_and_sweep_units(self: *Self) void {

@@ -34,7 +34,7 @@ pub const NROM = struct {
     }
 
     pub fn from_ines(allocator: std.mem.Allocator, ines: *const INes) !NROM {
-        const chr_rom = if (ines.chr_rom.len == 0) try allocator.alloc(u8, 8096) else ines.chr_rom;
+        const chr_rom = if (ines.chr_rom.len == 0) try allocator.alloc(u8, 8 * 1024) else ines.chr_rom;
         const vram = try allocator.alloc(u8, 2048);
         return .{
             .prg_rom = ines.prg_rom,

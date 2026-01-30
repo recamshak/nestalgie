@@ -8,9 +8,7 @@ const c = @cImport({
     @cInclude("SDL3/SDL.h");
 });
 
-var buffer: [128 * 1024]u8 = undefined;
-var fba = std.heap.FixedBufferAllocator.init(&buffer);
-var allocator = fba.allocator();
+var allocator = std.heap.c_allocator;
 var display = Display{};
 var audio: Audio = Audio{};
 var keyboard_state: [*c]const bool = undefined;
@@ -52,7 +50,7 @@ pub fn main() !void {
     }.call;
 
     const filepath = std.mem.span(std.os.argv[1]);
-    const data = try std.fs.cwd().readFileAlloc(allocator, filepath, 64 * 1024);
+    const data = try std.fs.cwd().readFileAlloc(allocator, filepath, 512 * 1024);
     defer allocator.free(data);
 
     var ines = try nestalgie.INes.parse(data);

@@ -72,9 +72,9 @@ pub fn parse(bytes: []u8) !INes {
     log.info("chr rom size: {d}", .{header.chr_rom_size});
     log.info("header size: {d}", .{@sizeOf(Header)});
     const prg_rom_start = @sizeOf(Header);
-    const prg_rom_end = prg_rom_start + 16384 * @as(u16, header.prg_rom_size);
+    const prg_rom_end = prg_rom_start + 16384 * @as(u32, header.prg_rom_size);
     const chr_rom_start = prg_rom_end;
-    const chr_rom_end = chr_rom_start + 8192 * @as(u16, header.chr_rom_size);
+    const chr_rom_end = chr_rom_start + 8192 * @as(u32, header.chr_rom_size);
 
     return .{
         .header = header,

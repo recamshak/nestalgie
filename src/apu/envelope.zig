@@ -20,7 +20,7 @@ pub const Envelope = union(EnvelopeType) {
             .decay => {
                 self.decay.counter -|= 1;
                 if (self.decay.counter == 0) {
-                    self.decay.counter = self.decay.period + 1;
+                    self.decay.counter = self.decay.period;
                     if (self.decay.volume == 0 and self.decay.repeat) {
                         self.decay.volume = 15;
                     } else {

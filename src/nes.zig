@@ -10,7 +10,7 @@ pub fn Nes(comptime Color: type) type {
     return struct {
         const Self = @This();
         const Cpu = CPU.Nes6502(Self);
-        const Apu = APU(Cpu);
+        const Apu = APU(Cpu, Self);
 
         allocator: std.mem.Allocator,
         cpu: Cpu,
@@ -126,6 +126,7 @@ pub fn Nes(comptime Color: type) type {
                 .cartridge = cartridge,
                 .allocator = allocator,
             };
+            nes.apu.init(nes);
             const pc_lo = @as(u16, nes.read_u8(0xfffc));
             const pc_hi = @as(u16, nes.read_u8(0xfffd));
             nes.cpu.pc = (pc_hi << 8) | pc_lo;
