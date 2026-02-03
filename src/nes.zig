@@ -20,19 +20,12 @@ pub fn Nes(comptime Color: type) type {
         cartridge: Cartridge,
 
         internal_ram: [2048]u8 = .{0} ** 2048,
-        palette: [32]u8 = .{0} ** 32,
         // Additional cycles from a DMA write
         additional_cycles: u16 = 0,
 
         frame_consumed_cycle_count: u32 = 0,
         frame_cycle_count: u32 = 29_780,
 
-        fn map_palette_address(address: u16) u16 {
-            if (address & 0x0003 != 0) {
-                return address & 0x001F; // Mirroring of $3F00-$3F1F in $3F00-$3FFF
-            }
-            return address & 0x000F; // $3F1{0,4,8,C} are mirrors of $3F0{0,4,8,C}
-        }
         pub inline fn read_u8(self: *Self, address: u16) u8 {
             return switch (address & 0xE000) {
                 0x0000 => self.internal_ram[address & 0x07FF],
@@ -89,14 +82,14 @@ pub fn Nes(comptime Color: type) type {
 
         pub inline fn ppu_read_u8(self: *Self, address: u16) u8 {
             return switch (address & 0xFF00) {
-                0x3F00 => self.palette[map_palette_address(address)],
+                0x3F00 => self.ppu.paletteRead(address),
                 else => self.cartridge.ppu_read_u8(address),
             };
         }
 
         pub inline fn ppu_write_u8(self: *Self, address: u16, value: u8) void {
             switch (address & 0xFF00) {
-                0x3F00 => self.palette[map_palette_address(address)] = value,
+                0x3F00 => self.ppu.paletteWrite(address, value),
                 else => self.cartridge.ppu_write_u8(address, value),
             }
         }

@@ -115,6 +115,8 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
         sprites: [8]EvaluatedSprite = undefined,
         sprites_count: u8 = 0,
 
+        palette: [32]u8 = .{0} ** 32,
+
         latch: u8 = 0,
         ppudata_read_latch: u8 = 0,
 
@@ -141,6 +143,21 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
 
         inline fn oamBytes(self: *Self) [*]u8 {
             return @ptrCast(&self.oam);
+        }
+
+        inline fn mapPaletteAddress(address: u16) u5 {
+            if (address & 0x0003 != 0) {
+                return @truncate(address & 0x001F); // Mirroring of $3F00-$3F1F in $3F00-$3FFF
+            }
+            return @truncate(address & 0x000F); // $3F1{0,4,8,C} are mirrors of $3F0{0,4,8,C}
+        }
+
+        pub inline fn paletteRead(self: *Self, address: u16) u8 {
+            return self.palette[mapPaletteAddress(address)];
+        }
+
+        pub inline fn paletteWrite(self: *Self, address: u16, value: u8) void {
+            self.palette[mapPaletteAddress(address)] = value;
         }
 
         fn vramAddress(self: *Self) u16 {
@@ -183,7 +200,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
         fn drawBackground(self: *Self) void {
             const x = self.dot - 1;
             if (x <= 7 and !self.mask.show_background_in_leftmost_8_pixels) {
-                self.pixel_buffer[x] = self.system_palette[self.bus.ppu_read_u8(0x3F00)];
+                self.pixel_buffer[x] = self.system_palette[self.palette[0]];
                 self.pixel_transparent[x] = true;
                 return;
             }
@@ -194,12 +211,12 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
             const palette_lsb: u4 = @intFromBool(self.context.palette_lsb & pattern_mask != 0);
             const is_transparent = pattern_msb | pattern_lsb == 0;
 
-            const color = if (is_transparent)
-                self.bus.ppu_read_u8(0x3F00)
+            const palette_idx: u5 = if (is_transparent)
+                0
             else
-                self.bus.ppu_read_u8(@as(u16, 0x3F00) | palette_msb << 3 | palette_lsb << 2 | pattern_msb << 1 | pattern_lsb);
+                @as(u5, palette_msb) << 3 | @as(u5, palette_lsb) << 2 | @as(u5, pattern_msb) << 1 | @as(u5, pattern_lsb);
 
-            self.pixel_buffer[x] = self.system_palette[color];
+            self.pixel_buffer[x] = self.system_palette[self.palette[palette_idx]];
             self.pixel_transparent[x] = is_transparent;
         }
         fn drawSprite(self: *Self) void {
@@ -213,14 +230,14 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
                 const pattern_lsb = (sprite.pattern_lsb >> bit & 1);
                 const pattern_msb = (sprite.pattern_msb >> bit & 1);
                 if (pattern_msb | pattern_lsb != 0) {
-                    const color = self.bus.ppu_read_u8(@as(u16, 0x3F10) | @as(u16, sprite.palette) << 2 | pattern_msb << 1 | pattern_lsb);
+                    const palette_idx: u5 = @truncate(0x10 | @as(u8, sprite.palette) << 2 | @as(u8, pattern_msb) << 1 | @as(u8, pattern_lsb));
                     if (sprite.is_sprite_0 and self.mask.enable_backgroud_rendering and is_background_opaque and (pattern_lsb | pattern_msb != 0)) {
                         self.status.sprite_0_hit = 1;
                     }
                     if (sprite.priority == 1 and is_background_opaque) {
                         self.pixel_buffer[x] = background_color;
                     } else {
-                        self.pixel_buffer[x] = self.system_palette[color];
+                        self.pixel_buffer[x] = self.system_palette[self.palette[palette_idx]];
                     }
                     break;
                 }
