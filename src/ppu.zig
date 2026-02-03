@@ -443,7 +443,7 @@ pub fn PPU(comptime Bus: type, comptime Cpu: type, comptime Color: type) type {
                     self.fetch_tile_phase_tick();
                     self.drawNextPixel();
                     if (self.scanline != 261) {
-                        self.draw(@as(u8, self.v.coarse_y_scroll) << 3 | self.v.fine_y_scroll, self.pixel_buffer);
+                        self.draw(@truncate(self.scanline), self.pixel_buffer);
                     }
                     self.incY();
                 },
