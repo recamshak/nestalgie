@@ -163,10 +163,6 @@ pub fn Nes(comptime Color: type) type {
             self.frame_consumed_cycle_count -= self.frame_cycle_count;
             self.frame_cycle_count ^= 1;
 
-            //std.log.info("Audio samples: {}, ticks: {}, ticks before next: {}", .{ self.apu.sample_count, self.apu.tick_count, self.apu.ticks_before_next_sample });
-            std.debug.assert(self.apu.sample_count == 735);
-            self.apu.sample_count = 0;
-            self.apu.tick_count = 0;
             self.apu.newFrame();
         }
     };

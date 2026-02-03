@@ -92,8 +92,6 @@ const ticks_between_sample: f32 = (1_789_773.0 / 44_100.0) - 0.06;
 pub fn APU(comptime Cpu: type, comptime Bus: type) type {
     return struct {
         const Self = @This();
-        sample_count: u32 = 0,
-        tick_count: u32 = 0,
 
         // Stores the number of CPU cycles elapsed in the current sequencer frame.
         // One frame runs for 29'830 or 37'287 CPU cycles for 4-step and 5-step sequence respectively.
@@ -281,7 +279,6 @@ pub fn APU(comptime Cpu: type, comptime Bus: type) type {
         }
 
         pub fn generate_sample(self: *Self) u8 {
-            self.sample_count += 1;
             const square: f32 = @floatFromInt(self.pulse1.getSample() + self.pulse2.getSample());
             const square_output: f32 = if (square == 0.0)
                 0.0
@@ -297,7 +294,6 @@ pub fn APU(comptime Cpu: type, comptime Bus: type) type {
 
         // This needs to be called every CPU cycle.
         pub fn tick(self: *Self) void {
-            self.tick_count += 1;
             self.triangle.tick();
             // every 2 ticks, call tick on each channel
             if (self.sequence_tick % 2 == 0) {
